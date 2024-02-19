@@ -6,6 +6,10 @@ window.addEventListener("load", function () {
     interpreter.loadStandardLibrary();
     interpreter.variables.IN = [];
     interpreter.variables.OUT = [];
+    interpreter.variables.clear = () => {
+        lineIndex = -1;
+        history.innerHTML = "";
+    };
     window.interpreter = interpreter;
     
     const fitTextToArea = textarea => {
@@ -54,6 +58,9 @@ window.addEventListener("load", function () {
         input.focus();
     };
     const addOutputLine = result => {
+        if(result === undefined) {
+            return;
+        }
         let label = document.createElement("div");
         label.className = "label";
         label.textContent = `OUT(${lineIndex}) := `;

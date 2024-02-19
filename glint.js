@@ -794,6 +794,7 @@ class GlintInterpreter {
             return children.map(child => this.evalTree(child));
         }
         if(instruction.type === GlintTokenizer.Types.WORD) {
+            assert(Object.hasOwn(this.variables, instruction.value), "Undefined variable " + instruction.value);
             let variable = this.variables[instruction.value];
             if(children === null) {
                 return variable;
