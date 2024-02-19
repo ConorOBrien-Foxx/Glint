@@ -130,7 +130,7 @@ class GlintTokenizer {
     // final operator names have all whitespace removed
     static Regexes = [
         [ /(-?[\d,.]+)(deg)?/, GlintTokenizer.Types.NUMBER ],
-        [ /%\s*of|[:<>!]=|[-+\/%*^=<>!@]/, GlintTokenizer.Types.OPERATOR ],
+        [ /%\s*of|[:<>!]=|[-+\/%*^=<>!@]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
         [ /;/, GlintTokenizer.Types.SEPARATOR ],
@@ -174,13 +174,6 @@ class GlintTokenizer {
 
 class GlintShunting {
     static Precedence = {
-        "+":    { precedence: 10,   associativity: "left" },
-        "-":    { precedence: 10,   associativity: "left" },
-        "*":    { precedence: 20,   associativity: "left" },
-        "/":    { precedence: 20,   associativity: "left" },
-        "%of":  { precedence: 20,   associativity: "left" },
-        "%":    { precedence: 20,   associativity: "left" },
-        "^":    { precedence: 30,   associativity: "right" },
         "(":    { precedence: -10,  associativity: "left" },
         "[":    { precedence: -10,  associativity: "left" },
         ":=":   { precedence: 0,    associativity: "right" },
@@ -190,6 +183,14 @@ class GlintShunting {
         ">=":   { precedence: 5,    associativity: "left" },
         ">":    { precedence: 5,    associativity: "left" },
         "!=":   { precedence: 5,    associativity: "left" },
+        "`":    { precedence: 7,    associativity: "left" },
+        "+":    { precedence: 10,   associativity: "left" },
+        "-":    { precedence: 10,   associativity: "left" },
+        "*":    { precedence: 20,   associativity: "left" },
+        "/":    { precedence: 20,   associativity: "left" },
+        "%of":  { precedence: 20,   associativity: "left" },
+        "%":    { precedence: 20,   associativity: "left" },
+        "^":    { precedence: 30,   associativity: "right" },
     }
     
     constructor(tokens) {
@@ -248,9 +249,13 @@ class GlintShunting {
             || token.type === GlintTokenizer.Types.STRING;
     }
     
+    getPrecedenceInfo(value) {
+        return GlintShunting.Precedence[value[0] === "`" ? "`" : value];
+    }
+    
     comparePrecedence(token, stackToken) {
-        let tokenInfo = GlintShunting.Precedence[token.value];
-        let stackTokenInfo = GlintShunting.Precedence[stackToken.value];
+        let tokenInfo = this.getPrecedenceInfo(token.value);
+        let stackTokenInfo = this.getPrecedenceInfo(stackToken.value);
         
         assert(tokenInfo, `Expected ${token.value} (from Token ${Glint.display(token)}) to have defined Precedence`);
         assert(stackTokenInfo, `Expected ${stackToken.value} Token (from ${Glint.display(stackToken)}) to have defined Precedence`);
@@ -519,6 +524,12 @@ class GlintInterpreter {
             return value;
         }
         
+        if(value[0] === "`") {
+            let functionName = value.slice(1, -1);
+            let fn = this.variables[functionName];
+            return fn(...args);
+        }
+        
         if(value === "%of") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
@@ -605,7 +616,7 @@ class GlintInterpreter {
             return Glint.accessIndex(base, indices);
         }
         
-        assert(false, `Could not handle instruction ${value}@${arity} (token ${Glint.display(instruction)})`);
+        assert(false, `Could not handle instruction ${value}@${args.length}`);
     }
     
     evalTreeOp(instruction, args) {
