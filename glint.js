@@ -123,6 +123,7 @@ class GlintTokenizer {
         OPEN_BRACKET: Symbol("GlintTokenizer.Types.OPEN_BRACKET"),
         CLOSE_BRACKET: Symbol("GlintTokenizer.Types.CLOSE_BRACKET"),
         SEPARATOR: Symbol("GlintTokenizer.Types.SEPARATOR"),
+        OP_CAPTURE: Symbol("GlintTokenizer.Types.OP_CAPTURE"),
         STRING: Symbol("GlintTokenizer.Types.STRING"),
     };
     // TODO: accept custom operators
@@ -181,6 +182,7 @@ class GlintShunting {
         "%":    { precedence: 20,   associativity: "left" },
         "^":    { precedence: 30,   associativity: "right" },
         "(":    { precedence: -10,  associativity: "left" },
+        "[":    { precedence: -10,  associativity: "left" },
         ":=":   { precedence: 0,    associativity: "right" },
         "=":    { precedence: 5,    associativity: "left" },
         "<=":   { precedence: 5,    associativity: "left" },
@@ -251,7 +253,7 @@ class GlintShunting {
         let stackTokenInfo = GlintShunting.Precedence[stackToken.value];
         
         assert(tokenInfo, `Expected ${token.value} (from Token ${Glint.display(token)}) to have defined Precedence`);
-        assert(stackTokenInfo, `Expected ${stackToken.value} Token (from ${Glint.display(token)}) to have defined Precedence`);
+        assert(stackTokenInfo, `Expected ${stackToken.value} Token (from ${Glint.display(stackToken)}) to have defined Precedence`);
         
         if(token.arity === 1) {
             // regardless of stackToken.arity, 1 or 2
@@ -391,15 +393,32 @@ class GlintShunting {
             this.nextParenIsFunctionCall = false;
         }
         else if(token.type === GlintTokenizer.Types.CLOSE_BRACKET) {
+            let startFlushIndex = this.operatorStack.length;
             this.flushTo(GlintTokenizer.Types.OPEN_BRACKET);
+            let opsFlushed = startFlushIndex - this.operatorStack.length;
+            
             this.operatorStack.pop();
-            this.outputQueue.push({
-                ...token,
-                arity: this.arityStack.pop()
-            });
+            
+            let arity = this.arityStack.pop();
+            if(arity === 0 && opsFlushed > 0) {
+                // capture op
+                // XXX: more sinful output queue popping
+                let ops = this.outputQueue.splice(-opsFlushed);
+                this.outputQueue.push({
+                    type: GlintTokenizer.Types.OP_CAPTURE,
+                    value: "[" + ops.map(e => e.value) + "]",
+                    groups: ops,
+                });
+            }
+            else {
+                this.outputQueue.push({
+                    ...token,
+                    arity,
+                });
+            }
             this.flagDataForTopArity();
             this.nextOpArity = 2;
-            // []() is an indexing expression
+            // []() is an indexing/call expression
             this.nextParenIsFunctionCall = true;
         }
         else if(this.shouldSkip(token)) {
@@ -664,6 +683,19 @@ class GlintInterpreter {
             else {
                 children = children.map(child => this.evalTree(child));
                 return Glint.accessIndex(variable, children);
+            }
+        }
+        if(instruction.type === GlintTokenizer.Types.OP_CAPTURE) {
+            assert(instruction.groups.length === 1, "Cannot capture more than 1 op yet");
+            let myOp = instruction.groups[0];
+            let fn = (...args) => this.evalOp({ ...myOp, arity: args.length }, args);
+            if(children) {
+                // children = children.map(child => this.evalTree(child));
+                console.log("CHILDREN", children);
+                return fn(...children);
+            }
+            else {
+                return fn;
             }
         }
         assert(false, `Could not handle operator type ${instruction.type.toString()} ${Glint.display(instruction)}`);
