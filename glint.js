@@ -504,108 +504,122 @@ class GlintInterpreter {
         }
     }
     
-    assertArity(instruction, expectedArity) {
+    assertArity(instruction, args, expectedArity) {
         assert(
-            instruction.arity === expectedArity,
-            `Could not call arity-${expectedArity} operator ${instruction.value} as arity-${instruction.arity}`
+            args.length === expectedArity,
+            `Could not call arity-${expectedArity} operator ${instruction} as arity-${args.length}`
         );
     }
     
-    evalOp(instruction, args) {
-        let { value, arity } = instruction;
-        
+    evalOp(value, args) {
         if(value === ":=") {
             let [ varName, value ] = args;
-            value = this.evalTree(value);
             assert(varName.children === null, "Cannot handle nested assignment expression");
             this.variables[varName.value.value] = value;
             return value;
         }
         
         if(value === "%of") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x * y / 100;
         }
         
         if(value === "+") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x + y;
         }
         
         if(value === "-") {
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            let [ x, y ] = args;
             return arity === 1 ? -x : x - y;
         }
         
         if(value === "*") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x * y;
         }
         
         if(value === "/") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
+            if(typeof y === "function") {
+                return x.reduce((p, c) => y(p, c));
+            }
             return x / y;
         }
         
         if(value === "%") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x % y;
         }
         
         if(value === "^") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x ** y;
         }
         
-        // TODO: compare arrays
+        // TODO: compare arrays/objects
         if(value === ">") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x > y;
         }
         
         if(value === "<") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x < y;
         }
         
         if(value === ">=") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x >= y;
         }
         
         if(value === "<=") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x <= y;
         }
         
         if(value === "=") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x == y;
         }
         
         if(value === "!=") {
-            this.assertArity(instruction, 2);
-            let [ x, y ] = args.map(arg => this.evalTree(arg));
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
             return x != y;
         }
         
         if(value === "@") {
-            let [ base, ...indices ] = args.map(arg => this.evalTree(arg));
+            let [ base, ...indices ] = args;
             return Glint.accessIndex(base, indices);
         }
         
         assert(false, `Could not handle instruction ${value}@${arity} (token ${Glint.display(instruction)})`);
+    }
+    
+    evalTreeOp(instruction, args) {
+        let { value, arity } = instruction;
+        
+        let hold = args.map(() => false);
+        
+        if(value === ":=") {
+            hold[0] = true;
+        }
+        
+        args = args.map((arg, idx) => hold[idx] ? arg : this.evalTree(arg));
+        
+        return this.evalOp(instruction.value, args);
     }
     
     makeTree(string) {
@@ -664,7 +678,7 @@ class GlintInterpreter {
             return this.parseRawString(instruction);
         }
         if(instruction.type === GlintTokenizer.Types.OPERATOR) {
-            return this.evalOp(instruction, children);
+            return this.evalTreeOp(instruction, children);
         }
         if(instruction.type === GlintTokenizer.Types.CLOSE_BRACKET) {
             // array
@@ -688,7 +702,7 @@ class GlintInterpreter {
         if(instruction.type === GlintTokenizer.Types.OP_CAPTURE) {
             assert(instruction.groups.length === 1, "Cannot capture more than 1 op yet");
             let myOp = instruction.groups[0];
-            let fn = (...args) => this.evalOp({ ...myOp, arity: args.length }, args);
+            let fn = (...args) => this.evalOp(myOp.value, args);
             if(children) {
                 // children = children.map(child => this.evalTree(child));
                 console.log("CHILDREN", children);
