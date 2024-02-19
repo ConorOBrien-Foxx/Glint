@@ -148,6 +148,7 @@ class GlintTokenizer {
     
     static Types = {
         OPERATOR: Symbol("GlintTokenizer.Types.OPERATOR"),
+        ADVERB: Symbol("GlintTokenizer.Types.ADVERB"),
         NUMBER: Symbol("GlintTokenizer.Types.NUMBER"),
         WORD: Symbol("GlintTokenizer.Types.WORD"),
         WHITESPACE: Symbol("GlintTokenizer.Types.WHITESPACE"),
@@ -162,8 +163,10 @@ class GlintTokenizer {
     // TODO: accept custom operators
     // final operator names have all whitespace removed
     static Regexes = [
-        [ /(_?[\d,.]+)(deg)?/, GlintTokenizer.Types.NUMBER ],
+        // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
+        [ /(_?(?:\.[\d,]+|[\d,]+\.?))(deg)?/, GlintTokenizer.Types.NUMBER ],
         [ /%\s*of|<=>|[:<>!]=|[-+\/%*^=<>!@]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
+        [ /[.]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
         [ /;/, GlintTokenizer.Types.SEPARATOR ],
@@ -232,10 +235,13 @@ class GlintShunting {
         this.tokens = tokens;
         this.outputQueue = [];
         this.operatorStack = [];
+        // for keep track of which prefix adverbs are being used
+        this.adverbStack = [];
         // for tracking number of function parameters
         this.arityStack = [];
         // operators at the start of an expression are unary
         this.nextOpArity = 1;
+        // initial parentheses are not function calls
         this.nextParenIsFunctionCall = false;
         this.autoInsertParentheses();
     }
@@ -348,6 +354,9 @@ class GlintShunting {
             this.flagDataForTopArity();
             this.nextParenIsFunctionCall = true;
         }
+        else if(token.type === GlintTokenizer.Types.ADVERB) {
+            this.adverbStack.push(token);
+        }
         else if(token.type === GlintTokenizer.Types.SEPARATOR) {
             // separates function arguments
             this.flushTo(
@@ -363,6 +372,7 @@ class GlintShunting {
             let tokenWithArity = {
                 ...token,
                 arity: this.nextOpArity,
+                adverbs: this.adverbStack.splice(0),
             };
             while (
                 this.operatorStack.length > 0 && this.comparePrecedence(tokenWithArity, this.operatorStack.at(-1))
@@ -378,6 +388,7 @@ class GlintShunting {
             if(this.nextParenIsFunctionCall) {
                 // handle function call case
                 // XXX: it's probably sinful to pop from the outputQueue but whatever.
+                // TODO: allow adverbs to apply to function callers
                 let functionHandle = this.outputQueue.pop();
                 if(typeof functionHandle.arity === "undefined") {
                     let functionToken = {
@@ -661,8 +672,34 @@ class GlintInterpreter {
         assert(false, `Could not handle instruction ${value}@${args.length}`);
     }
     
+    broadcast(fn, args) {
+        if(args.length === 0) {
+            return fn();
+        }
+        else if(args.length === 1) {
+            let [ xs ] = args;
+            return xs.map
+                ? xs.map(x => this.broadcast(fn, [ x ]))
+                : fn(xs);
+        }
+        else if(args.length === 2) {
+            let [ xs, ys ] = args;
+            return xs.map && ys.map
+                ? xs.map((x, idx) => this.broadcast(fn, [ x, ys[idx] ]))
+                : xs.map
+                    ? xs.map(x => this.broadcast(fn, [ x, ys ]))
+                    : ys.map
+                        ? ys.map(y => this.broadcast(fn, [ xs, y ]))
+                        : fn(xs, ys);
+        }
+        else {
+            assert(false, `Cannot broadcast with ${args.length} arguments yet`);
+        }
+    }
+    
     evalTreeOp(instruction, args) {
-        let { value, arity } = instruction;
+        let { value, arity, adverbs } = instruction;
+        adverbs ??= [];
         
         let hold = args.map(() => false);
         
@@ -672,7 +709,14 @@ class GlintInterpreter {
         
         args = args.map((arg, idx) => hold[idx] ? arg : this.evalTree(arg));
         
-        return this.evalOp(instruction.value, args);
+        if(adverbs.length === 0) {
+            return this.evalOp(instruction.value, args);
+        }
+        else {
+            // TODO: more generic system
+            assert(adverbs.length === 1 && adverbs[0].value === ".", "Cannot handle other adverbs than `.` yet");
+            return this.broadcast((...inner) => this.evalOp(instruction.value, inner), args);
+        }
     }
     
     makeTree(string) {
