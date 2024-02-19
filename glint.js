@@ -218,7 +218,7 @@ class GlintShunting {
                 }
                 let nextToken = this.tokens[j];
                 
-                if(!nextToken || !this.isData(nextToken)) {
+                if(!nextToken || !this.isDataStart(nextToken)) {
                     continue;
                 }
                 // insert open parenthesis before j
@@ -247,6 +247,11 @@ class GlintShunting {
         return token.type === GlintTokenizer.Types.NUMBER
             || token.type === GlintTokenizer.Types.WORD
             || token.type === GlintTokenizer.Types.STRING;
+    }
+    
+    isDataStart(token) {
+        return this.isData(token)
+            || token.type === GlintTokenizer.Types.OPEN_BRACKET;
     }
     
     getPrecedenceInfo(value) {
@@ -372,7 +377,6 @@ class GlintShunting {
             this.nextParenIsFunctionCall = false;
         }
         else if(token.type === GlintTokenizer.Types.CLOSE_PAREN) {
-            console.log("HELLO", this.operatorStack);
             this.flushTo(GlintTokenizer.Types.OPEN_PAREN);
             let openParen = this.operatorStack.pop();
             if(openParen.isFunctionCall) {
@@ -409,6 +413,7 @@ class GlintShunting {
                 // capture op
                 // XXX: more sinful output queue popping
                 let ops = this.outputQueue.splice(-opsFlushed);
+                ops.reverse();
                 this.outputQueue.push({
                     type: GlintTokenizer.Types.OP_CAPTURE,
                     value: "[" + ops.map(e => e.value) + "]",
@@ -493,6 +498,8 @@ class GlintInterpreter {
             c: (...args) => args,
             pi: Math.PI,
             e: Math.E,
+            sum: x => x.reduce((p, c) => p + c, 0),
+            size: x => x.length ?? x.size,
             range: (...args) =>
                 args.length === 1
                     ? [...Array(args[0]).keys()]
@@ -544,7 +551,7 @@ class GlintInterpreter {
         
         if(value === "-") {
             let [ x, y ] = args;
-            return arity === 1 ? -x : x - y;
+            return args.length === 1 ? -x : x - y;
         }
         
         if(value === "*") {
@@ -675,6 +682,18 @@ class GlintInterpreter {
             (whole, word) => word === "\\" ? "\\" : symbolFromName(word) ?? whole);
     }
     
+    condenseCapturedOps(ops) {
+        console.log("CONDENSED", ops.map(op => op.value));
+        let fns = ops.map(op => (...args) => this.evalOp(op.value, args));
+        if(fns.length === 1) {
+            return fns[0];
+        }
+        if(fns.length === 3) {
+            return (...args) => fns[1](fns[0](...args), fns[2](...args));
+        }
+        assert(false, `Cannot capture ${fns.length} ops`);
+    }
+    
     evalTree(tree) {
         if(tree === undefined) {
             return;
@@ -711,9 +730,7 @@ class GlintInterpreter {
             }
         }
         if(instruction.type === GlintTokenizer.Types.OP_CAPTURE) {
-            assert(instruction.groups.length === 1, "Cannot capture more than 1 op yet");
-            let myOp = instruction.groups[0];
-            let fn = (...args) => this.evalOp(myOp.value, args);
+            let fn = this.condenseCapturedOps(instruction.groups);
             if(children) {
                 // children = children.map(child => this.evalTree(child));
                 console.log("CHILDREN", children);
