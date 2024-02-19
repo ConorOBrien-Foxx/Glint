@@ -129,7 +129,7 @@ class GlintTokenizer {
     // TODO: accept custom operators
     // final operator names have all whitespace removed
     static Regexes = [
-        [ /(-?[\d,.]+)(deg)?/, GlintTokenizer.Types.NUMBER ],
+        [ /(_?[\d,.]+)(deg)?/, GlintTokenizer.Types.NUMBER ],
         [ /%\s*of|[:<>!]=|[-+\/%*^=<>!@]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
@@ -666,7 +666,7 @@ class GlintInterpreter {
         console.log(token);
         // let string = token.value;
         let [ number, suffix ] = token.groups;
-        number = parseFloat(number.replace(/,/g, ""));
+        number = parseFloat(number.replace(/,/g, "").replace(/_/, "-"));
         if(suffix === "deg") {
             number = number * Math.PI / 180;
         }
