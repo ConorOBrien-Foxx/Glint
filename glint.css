@@ -1,0 +1,51 @@
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background-color: #244;
+    color: #add;
+}
+header {
+    background-color: #022;
+    color: #cff;
+    padding: 5px 20px;
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    box-shadow: 0 0 35px #244;
+}
+article {
+    padding: 10px;
+}
+textarea {
+    padding: 10px;
+    margin: 3px 0;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 16px;
+    font-family: Consolas;
+    background-color: #153737;
+    color: #add;
+    border: 2px solid;
+    resize: none;
+    white-space: pre;
+    overflow-wrap: normal;
+    overflow-x: scroll;
+}
+textarea[readonly] {
+    background-color: #022;
+    border-color: #022;
+}
+.line {
+    display: flex;
+    align-items: baseline;
+    font-family: Consolas;
+    gap: 10px;
+}
+.line .label {
+    width: 100px;
+    text-align: right;
+}
+.line textarea {
+    flex-grow: 1;
+}
