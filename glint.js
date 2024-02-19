@@ -95,6 +95,39 @@ Glint.display = (value, ancestors = []) => {
     // todo: better
     return "" + value;
 };
+Glint.deepCompare = (a, b) => {
+    if (typeof a === "object" && typeof b === "object" && a !== null && b !== null) {
+        const keysA = Object.keys(a);
+        const keysB = Object.keys(b);
+        
+        if(keysA.length !== keysB.length) {
+            return keysA.length < keysB.length ? -1 : 1;
+        }
+        
+        for(let key of keysA) {
+            if(!b.hasOwnProperty(key)) {
+                return -1;
+            }
+            const comparisonResult = Glint.deepCompare(a[key], b[key]);
+            if(comparisonResult !== 0) {
+                return comparisonResult;
+            }
+        }
+        return 0;
+    }
+    else {
+        return (a > b) - (a < b);
+    }
+};
+Glint.range = (...args) =>
+    args.length === 1
+        ? [...Array(args[0]).keys()]
+        : args.length === 2
+            ? [...Array(args[1] - args[0]).keys()].map(i => i + args[0])
+            : assert(args.length === 3, `Cannot handle ${args.length}-arity range`)
+            && [...Array(Math.ceil((args[1] - args[0]) / args[2])).keys()].map(i => i * args[2] + args[0]);
+Glint.sort = sortable => 
+    [...sortable].sort(Glint.deepCompare);
 
 class GlintTokenizer {
     constructor(string) {
@@ -130,7 +163,7 @@ class GlintTokenizer {
     // final operator names have all whitespace removed
     static Regexes = [
         [ /(_?[\d,.]+)(deg)?/, GlintTokenizer.Types.NUMBER ],
-        [ /%\s*of|[:<>!]=|[-+\/%*^=<>!@]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
+        [ /%\s*of|<=>|[:<>!]=|[-+\/%*^=<>!@]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
         [ /;/, GlintTokenizer.Types.SEPARATOR ],
@@ -173,6 +206,7 @@ class GlintTokenizer {
 }
 
 class GlintShunting {
+    // TODO: chaining comparisons? e.g. a < b < c is equiv. to a < b && b < c?
     static Precedence = {
         "(":    { precedence: -10,  associativity: "left" },
         "[":    { precedence: -10,  associativity: "left" },
@@ -183,6 +217,7 @@ class GlintShunting {
         ">=":   { precedence: 5,    associativity: "left" },
         ">":    { precedence: 5,    associativity: "left" },
         "!=":   { precedence: 5,    associativity: "left" },
+        "<=>":  { precedence: 6,    associativity: "left" },
         "`":    { precedence: 7,    associativity: "left" },
         "+":    { precedence: 10,   associativity: "left" },
         "-":    { precedence: 10,   associativity: "left" },
@@ -500,13 +535,8 @@ class GlintInterpreter {
             e: Math.E,
             sum: x => x.reduce((p, c) => p + c, 0),
             size: x => x.length ?? x.size,
-            range: (...args) =>
-                args.length === 1
-                    ? [...Array(args[0]).keys()]
-                    : args.length === 2
-                        ? [...Array(args[1] - args[0]).keys()].map(i => i + args[0])
-                        : assert(args.length === 3, `Cannot handle ${args.length}-arity range`)
-                        && [...Array(Math.ceil((args[1] - args[0]) / args[2])).keys()].map(i => i * args[2] + args[0]),
+            range: Glint.range,
+            sort: Glint.sort,
         });
         let mathWords = [
             "sin", "cos", "tan", "sinh", "cosh", "tanh"
@@ -581,41 +611,46 @@ class GlintInterpreter {
             return x ** y;
         }
         
-        // TODO: compare arrays/objects
+        if(value === "<=>") {
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
+            return Glint.deepCompare(x, y);
+        }
+        
         if(value === ">") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x > y;
+            return Glint.deepCompare(x, y) > 0;
         }
         
         if(value === "<") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x < y;
+            return Glint.deepCompare(x, y) < 0;
         }
         
         if(value === ">=") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x >= y;
+            return Glint.deepCompare(x, y) >= 0;
         }
         
         if(value === "<=") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x <= y;
+            return Glint.deepCompare(x, y) <= 0;
         }
         
         if(value === "=") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x == y;
+            return Glint.deepCompare(x, y) == 0;
         }
         
         if(value === "!=") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x != y;
+            return Glint.deepCompare(x, y) != 0;
         }
         
         if(value === "@") {
