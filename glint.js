@@ -128,8 +128,8 @@ class GlintTokenizer {
     // TODO: accept custom operators
     // final operator names have all whitespace removed
     static Regexes = [
+        [ /(-?[\d,.]+)(deg)?/, GlintTokenizer.Types.NUMBER ],
         [ /%\s*of|[:<>!]=|[-+\/%*^=<>!@]/, GlintTokenizer.Types.OPERATOR ],
-        [ /([\d,.]+)(deg)?/, GlintTokenizer.Types.NUMBER ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
         [ /;/, GlintTokenizer.Types.SEPARATOR ],
@@ -686,6 +686,7 @@ if(typeof module !== "undefined") {
     // node.js testing
     // TODO: validate and exclude cases like "3 4 +" being valid
     let interpreter = new GlintInterpreter();
+    interpreter.loadStandardLibrary();
     for(let s of process.argv.slice(2)) {
         console.log("Input: ", s);
         console.log("Output: ", interpreter.eval(s));
