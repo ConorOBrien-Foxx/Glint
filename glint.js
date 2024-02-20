@@ -46,7 +46,80 @@ Glint.accessIndex = (base, indices) =>
         : base[indices[0]]
     );
 
-Glint.display = (value, ancestors = []) => {
+
+Glint.DataTypes = {
+    INT:        0b00000001,
+    FLOAT:      0b00000010,
+    BIGINT:     0b00000100,
+    STRING:     0b00001000,
+    LIST:       0b00010000,
+    OBJECT:     0b00100000,
+};
+Glint.DataTypes.INT_LIKE = Glint.DataTypes.INT | Glint.DataTypes.BIGINT;
+Glint.DataTypes.NUMBER_LIKE = Glint.DataTypes.INT | Glint.DataTypes.FLOAT | Glint.DataTypes.BIGINT;
+
+Glint.typeOf = arg => {
+    if(typeof arg === "bigint") {
+        return Glint.DataTypes.BIGINT;
+    }
+    if(typeof arg === "number") {
+        return Number.isInteger(arg)
+            ? Glint.DataTypes.INT
+            : Glint.DataTypes.FLOAT;
+    }
+    if(typeof arg === "string") {
+        return Glint.DataTypes.STRING;
+    }
+    if(Array.isArray(arg)) {
+        return Glint.DataTypes.LIST;
+    }
+    // TODO: more cases
+    return Glint.DataTypes.OBJECT;
+}
+
+Glint.typesOfAll = (...args) =>
+    args.map(Glint.typeOf);
+
+Glint.TypesToDataMap = Object.fromEntries(
+    Object.entries(Glint.DataTypes)
+        .map(row => row.reverse())
+);
+Glint.TypesToNames = {
+    [Glint.DataTypes.BIGINT]: "big",
+    [Glint.DataTypes.INT]: "int",
+    [Glint.DataTypes.FLOAT]: "float",
+    [Glint.DataTypes.STRING]: "str",
+    [Glint.DataTypes.LIST]: "list",
+    [Glint.DataTypes.OBJECT]: "obj",
+};
+Glint.getStringType = type => {
+    let display = [];
+    for(let i = 1; Glint.TypesToDataMap[i]; i <<= 1) {
+        if((i & type) !== 0) {
+            display.push(Glint.TypesToNames[i]);
+        }
+    }
+    return display.join("|");
+};
+Glint.getDebugTypes = (...args) =>
+    args.map(Glint.typeOf)
+        .map(Glint.getStringType)
+        .join("; ");
+
+Glint.typeMatches = (datum, typeMask) =>
+    (Glint.typeOf(datum) & typeMask) !== 0;
+
+Glint.isInt = arg => Glint.typeMatches(arg, Glint.DataTypes.INT);
+Glint.isBigInt = arg => Glint.typeMatches(arg, Glint.DataTypes.BIGINT);
+Glint.isFloat = arg => Glint.typeMatches(arg, Glint.DataTypes.FLOAT);
+Glint.isString = arg => Glint.typeMatches(arg, Glint.DataTypes.STRING);
+Glint.isList = arg => Glint.typeMatches(arg, Glint.DataTypes.LIST);
+Glint.isObject = arg => Glint.typeMatches(arg, Glint.DataTypes.OBJECT);
+// psuedo types
+Glint.isIntLike = arg => Glint.typeMatches(arg, Glint.DataTypes.INT_LIKE);
+Glint.isNumberLike = arg => Glint.typeMatches(arg, Glint.DataTypes.NUMBER_LIKE);
+
+Glint._display = (value, ancestors = []) => {
     if(value instanceof Error) {
         return "Internal Error: " + value;
     }
@@ -61,7 +134,7 @@ Glint.display = (value, ancestors = []) => {
         let nextAncestors = [...ancestors, value];
         return "[ "
             + value
-                .map(el => Glint.display(el, nextAncestors))
+                .map(el => Glint._display(el, nextAncestors))
                 .join("; ")
             + " ]";
     }
@@ -69,7 +142,7 @@ Glint.display = (value, ancestors = []) => {
         let nextAncestors = [...ancestors, value];
         return "{ "
             + Object.entries(value)
-                .map(([key, el]) => Glint.display(key, nextAncestors) + ": " + Glint.display(el, nextAncestors))
+                .map(([key, el]) => Glint._display(key, nextAncestors) + ": " + Glint._display(el, nextAncestors))
                 .join("; ")
             + " }";
     }
@@ -85,6 +158,9 @@ Glint.display = (value, ancestors = []) => {
     if(value === undefined) {
         return "undef";
     }
+    if(typeof value === "bigint") {
+        return `big ${value}`;
+    }
     if(typeof value === "number") {
         let stringRep = value.toFixed(6);
         let [ iPart, fPart ] = stringRep.split(".");
@@ -95,6 +171,9 @@ Glint.display = (value, ancestors = []) => {
     // todo: better
     return "" + value;
 };
+// mask hidden parameter
+Glint.display = arg => Glint._display(arg);
+
 Glint.deepCompare = (a, b) => {
     if (typeof a === "object" && typeof b === "object" && a !== null && b !== null) {
         const keysA = Object.keys(a);
@@ -164,7 +243,7 @@ class GlintTokenizer {
     // final operator names have all whitespace removed
     static Regexes = [
         // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
-        [ /(_?(?:\.[\d,]+|[\d,]+\.?))(deg)?/, GlintTokenizer.Types.NUMBER ],
+        [ /(_?(?:[\d,]+\.[\d,]*|\.[\d,]+|[\d,]+\.?))(deg)?/, GlintTokenizer.Types.NUMBER ],
         [ /%\s*of|<=>|[:<>!]=|[-+\/%*^=<>!@]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
@@ -548,6 +627,7 @@ class GlintInterpreter {
             size: x => x.length ?? x.size,
             range: Glint.range,
             sort: Glint.sort,
+            big: n => BigInt(n),
         });
         let mathWords = [
             "sin", "cos", "tan", "sinh", "cosh", "tanh"
@@ -560,7 +640,7 @@ class GlintInterpreter {
     assertArity(instruction, args, expectedArity) {
         assert(
             args.length === expectedArity,
-            `Could not call arity-${expectedArity} operator ${instruction} as arity-${args.length}`
+            `Could not call arity-${expectedArity} operator ${instruction} as arity-${args.length}. Parameters: ${args.map(Glint.display).join("; ")}`
         );
     }
     
@@ -598,7 +678,15 @@ class GlintInterpreter {
         if(value === "*") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x * y;
+            if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
+                return BigInt(x) * BigInt(y);
+            }
+            else if(args.every(Glint.isNumberLike)) {
+                return Number(x) * Number(y);
+            }
+            else {
+                assert(false, `Cannot multiply types ${Glint.getDebugTypes(...args)}`);
+            }
         }
         
         if(value === "/") {
@@ -703,6 +791,7 @@ class GlintInterpreter {
         
         let hold = args.map(() => false);
         
+        // TODO: custom hold
         if(value === ":=") {
             hold[0] = true;
         }
@@ -726,13 +815,14 @@ class GlintInterpreter {
         let rpn = shunter.shuntingYard();
         let treeStack = [];
         for(let instruction of rpn) {
+            console.log("Making tree instruction", Glint.display(instruction));
             if(instruction.arity === undefined) {
                 treeStack.push({ value: instruction, children: null });
             }
             else {
                 treeStack.push({
                     value: instruction,
-                    children: treeStack.splice(-instruction.arity),
+                    children: instruction.arity === 0 ? [] : treeStack.splice(-instruction.arity),
                 });
             }
         }
@@ -791,6 +881,7 @@ class GlintInterpreter {
         }
         if(instruction.type === GlintTokenizer.Types.CLOSE_BRACKET) {
             // array
+            console.log("CHILDREN OF THE CLOSE BRACKET?", children);
             return children.map(child => this.evalTree(child));
         }
         if(instruction.type === GlintTokenizer.Types.WORD) {

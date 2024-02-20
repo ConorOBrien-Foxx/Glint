@@ -11,7 +11,9 @@ h1 {
     font-size: 36px;
     text-align: center;
 }
-
+h1 img {
+    padding-right: 10px;
+}
 body {
     margin: 0;
     background-color: #244;
