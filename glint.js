@@ -259,7 +259,7 @@ class GlintTokenizer {
     static Regexes = [
         // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
         [ /(_?(?:[\d,]+\.[\d,]*|\.[\d,]+|[\d,]+\.?))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
-        [ /%\s*of|<=>|[:<>!]=|[-+\/%*^=<>!@#]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
+        [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
@@ -318,7 +318,8 @@ class GlintShunting {
         ">":    { precedence: 5,    associativity: "left" },
         "!=":   { precedence: 5,    associativity: "left" },
         "<=>":  { precedence: 6,    associativity: "left" },
-        "`":    { precedence: 7,    associativity: "left" },
+        "|>":   { precedence: 7,    associativity: "left" },
+        "`":    { precedence: 8,    associativity: "left" },
         "#":    { precedence: 9,    associativity: "left" },
         "+":    { precedence: 10,   associativity: "left" },
         "-":    { precedence: 10,   associativity: "left" },
@@ -832,6 +833,15 @@ class GlintInterpreter {
             else {
                 assert(false, `Cannot exponentiate types ${Glint.getDebugTypes(...args)}`);
             }
+        }
+        
+        if(value === "|>") {
+            this.assertArity(value, args, 2);
+            let [ x, y ] = args;
+            if(Glint.isFunction(y)) {
+                return y(x);
+            }
+            assert(false, `Cannot pipe types ${Glint.getDebugTypes(...args)}`);
         }
         
         if(value === "<=>") {
