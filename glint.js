@@ -171,6 +171,10 @@ Glint._display = (value, ancestors = []) => {
     if(value === undefined) {
         return "undef";
     }
+    if(typeof value === "function") {
+        // TODO: better information
+        return `<fn @ ${value.length || "?"}>`;
+    }
     if(typeof value === "bigint") {
         return `${value}n`;
     }
@@ -211,13 +215,26 @@ Glint.deepCompare = (a, b) => {
         return (a > b) - (a < b);
     }
 };
-Glint.range = (...args) =>
-    args.length === 1
-        ? [...Array(args[0]).keys()]
-        : args.length === 2
-            ? [...Array(args[1] - args[0]).keys()].map(i => i + args[0])
-            : assert(args.length === 3, `Cannot handle ${args.length}-arity range`)
-            && [...Array(Math.ceil((args[1] - args[0]) / args[2])).keys()].map(i => i * args[2] + args[0]);
+Glint.range = (min, max, step) => {
+    if(step === undefined) {
+        step = 1;
+    }
+    if(max === undefined) {
+        max = min;
+        min = 0;
+    }
+    if(typeof max === "bigint" || typeof min === "bigint") {
+        max = BigInt(max);
+        min = BigInt(min);
+        step = BigInt(step);
+    }
+    let count = Math.ceil(Number(max - min) / Number(step));
+    let array = [...Array(count).keys()];
+    if(typeof max === "bigint") {
+        array = array.map(BigInt);
+    }
+    return array.map(i => i * step + min);
+};
 Glint.sort = sortable => 
     [...sortable].sort(Glint.deepCompare);
 
@@ -669,9 +686,29 @@ class GlintInterpreter {
     evalOp(value, args) {
         if(value === ":=") {
             let [ varName, value ] = args;
-            assert(varName.children === null, "Cannot handle nested assignment expression");
-            this.variables[varName.value.value] = value;
-            return value;
+            if(varName.value.arity !== undefined) {
+                // function definition
+                let params = varName.children.map(child => child.value.value);
+                let fn = (...args) => {
+                    // TODO: better scoping
+                    // this.addLocalScope(Object.fromEntries(params.map((param, idx) => [ param, args[idx] ])));
+                    
+                    // for now, variables get set in GLOBAL SCOPE >:|
+                    params.forEach((param, idx) => {
+                        this.variables[param] = args[idx];
+                    });
+                    
+                    return this.evalTree(value);
+                    // this.removeLocalScope();
+                };
+                this.variables[varName.value.value] = fn;
+                return fn;
+            }
+            else {
+                assert(varName.children === null, "Cannot handle nested assignment expression");
+                this.variables[varName.value.value] = value;
+                return value;
+            }
         }
         
         if(value[0] === "`") {
@@ -949,6 +986,7 @@ class GlintInterpreter {
         // TODO: custom hold
         if(value === ":=") {
             hold[0] = true;
+            hold[1] = true;
         }
         
         args = args.map((arg, idx) => hold[idx] ? arg : this.evalTree(arg));

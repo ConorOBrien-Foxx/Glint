@@ -16,4 +16,15 @@ ruby-esque lack of mandatory parens
 
 
 big(x) - bignumber
+
+{ x y ; x + y }
+
+or
+
+$1 + $2 - automatic lambda with two parameters?
+
+or
+
+f(x; y) := expression
+
 ```
