@@ -150,14 +150,14 @@ Glint._display = (value, ancestors = []) => {
     if(typeof value === "object") {
         let entries = Object.entries(value);
         if(entries.length === 0) {
-            return "{ }";
+            return ">[ ]";
         }
         let nextAncestors = [...ancestors, value];
-        return "{ "
+        return ">[ "
             + Object.entries(value)
                 .map(([key, el]) => Glint._display(key, nextAncestors) + ": " + Glint._display(el, nextAncestors))
                 .join("; ")
-            + " }";
+            + " ]";
     }
     if(Number.isNaN(value)) {
         return "nan";
@@ -259,7 +259,7 @@ class GlintTokenizer {
     static Regexes = [
         // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
         [ /(_?(?:[\d,]+\.[\d,]*|\.[\d,]+|[\d,]+\.?))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
-        [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
+        [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
@@ -309,25 +309,27 @@ class GlintShunting {
     static Precedence = {
         "(":    { precedence: -10,  associativity: "left" },
         "[":    { precedence: -10,  associativity: "left" },
-        "{":    { precedence: -10,  associativity: "left" },
+        // "{":    { precedence: -10,  associativity: "left" },
         ":=":   { precedence: 0,    associativity: "right" },
+        ":":    { precedence: 3,    associativity: "left" },
         "=":    { precedence: 5,    associativity: "left" },
         "<=":   { precedence: 5,    associativity: "left" },
         "<":    { precedence: 5,    associativity: "left" },
         ">=":   { precedence: 5,    associativity: "left" },
         ">":    { precedence: 5,    associativity: "left" },
         "!=":   { precedence: 5,    associativity: "left" },
-        "<=>":  { precedence: 6,    associativity: "left" },
-        "|>":   { precedence: 7,    associativity: "left" },
-        "`":    { precedence: 8,    associativity: "left" },
-        "#":    { precedence: 9,    associativity: "left" },
-        "+":    { precedence: 10,   associativity: "left" },
-        "-":    { precedence: 10,   associativity: "left" },
-        "*":    { precedence: 20,   associativity: "left" },
-        "/":    { precedence: 20,   associativity: "left" },
-        "%of":  { precedence: 20,   associativity: "left" },
-        "%":    { precedence: 20,   associativity: "left" },
-        "^":    { precedence: 30,   associativity: "right" },
+        "<=>":  { precedence: 7,    associativity: "left" },
+        "|>":   { precedence: 10,   associativity: "left" },
+        "`":    { precedence: 13,   associativity: "left" },
+        "#":    { precedence: 15,   associativity: "left" },
+        "+":    { precedence: 20,   associativity: "left" },
+        "-":    { precedence: 20,   associativity: "left" },
+        "*":    { precedence: 30,   associativity: "left" },
+        "/":    { precedence: 30,   associativity: "left" },
+        "%of":  { precedence: 30,   associativity: "left" },
+        "%":    { precedence: 30,   associativity: "left" },
+        "^":    { precedence: 40,   associativity: "right" },
+        "@":    { precedence: 90,   associativity: "left" },
     }
     
     constructor(tokens) {
@@ -851,9 +853,13 @@ class GlintInterpreter {
         }
         
         if(value === ">") {
-            this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return Glint.deepCompare(x, y) > 0;
+            if(args.length === 1) {
+                return Object.fromEntries(x);
+            }
+            else {
+                return Glint.deepCompare(x, y) > 0;
+            }
         }
         
         if(value === "<") {
@@ -889,6 +895,21 @@ class GlintInterpreter {
         if(value === "@") {
             let [ base, ...indices ] = args;
             return Glint.accessIndex(base, indices);
+        }
+        
+        if(value === ":") {
+            let [ x, y ] = args;
+            return args;
+            if(args.length === 1) {
+                return [ x ];
+            }
+            else {
+                return [ x, y ];
+                // return [
+                    // ...(Array.isArray(x) ? x : [x]),
+                    // y
+                // ];
+            }
         }
         
         assert(false, `Could not handle instruction ${value}@${args.length}`);
