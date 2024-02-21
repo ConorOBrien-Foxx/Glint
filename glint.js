@@ -54,6 +54,7 @@ Glint.DataTypes = {
     STRING:     0b00001000,
     LIST:       0b00010000,
     OBJECT:     0b00100000,
+    FUNCTION:   0b01000000,
 };
 Glint.DataTypes.INT_LIKE = Glint.DataTypes.INT | Glint.DataTypes.BIGINT;
 Glint.DataTypes.NUMBER_LIKE = Glint.DataTypes.INT | Glint.DataTypes.FLOAT | Glint.DataTypes.BIGINT;
@@ -73,6 +74,9 @@ Glint.typeOf = arg => {
     if(Array.isArray(arg)) {
         return Glint.DataTypes.LIST;
     }
+    if(typeof arg === "function") {
+        return Glint.DataTypes.FUNCTION;
+    }
     // TODO: more cases
     return Glint.DataTypes.OBJECT;
 }
@@ -91,6 +95,7 @@ Glint.TypesToNames = {
     [Glint.DataTypes.STRING]: "str",
     [Glint.DataTypes.LIST]: "list",
     [Glint.DataTypes.OBJECT]: "obj",
+    [Glint.DataTypes.FUNCTION]: "fn",
 };
 Glint.getStringType = type => {
     let display = [];
@@ -115,6 +120,7 @@ Glint.isFloat = arg => Glint.typeMatches(arg, Glint.DataTypes.FLOAT);
 Glint.isString = arg => Glint.typeMatches(arg, Glint.DataTypes.STRING);
 Glint.isList = arg => Glint.typeMatches(arg, Glint.DataTypes.LIST);
 Glint.isObject = arg => Glint.typeMatches(arg, Glint.DataTypes.OBJECT);
+Glint.isFunction = arg => Glint.typeMatches(arg, Glint.DataTypes.FUNCTION);
 // psuedo types
 Glint.isIntLike = arg => Glint.typeMatches(arg, Glint.DataTypes.INT_LIKE);
 Glint.isNumberLike = arg => Glint.typeMatches(arg, Glint.DataTypes.NUMBER_LIKE);
@@ -131,6 +137,9 @@ Glint._display = (value, ancestors = []) => {
         return "[Circular]";
     }
     if(Array.isArray(value)) {
+        if(value.length === 0) {
+            return "[ ]";
+        }
         let nextAncestors = [...ancestors, value];
         return "[ "
             + value
@@ -139,6 +148,10 @@ Glint._display = (value, ancestors = []) => {
             + " ]";
     }
     if(typeof value === "object") {
+        let entries = Object.entries(value);
+        if(entries.length === 0) {
+            return "{ }";
+        }
         let nextAncestors = [...ancestors, value];
         return "{ "
             + Object.entries(value)
@@ -159,7 +172,7 @@ Glint._display = (value, ancestors = []) => {
         return "undef";
     }
     if(typeof value === "bigint") {
-        return `big ${value}`;
+        return `${value}n`;
     }
     if(typeof value === "number") {
         let stringRep = value.toFixed(6);
@@ -235,6 +248,8 @@ class GlintTokenizer {
         CLOSE_PAREN: Symbol("GlintTokenizer.Types.CLOSE_PAREN"),
         OPEN_BRACKET: Symbol("GlintTokenizer.Types.OPEN_BRACKET"),
         CLOSE_BRACKET: Symbol("GlintTokenizer.Types.CLOSE_BRACKET"),
+        OPEN_BRACE: Symbol("GlintTokenizer.Types.OPEN_BRACE"),
+        CLOSE_BRACE: Symbol("GlintTokenizer.Types.CLOSE_BRACE"),
         SEPARATOR: Symbol("GlintTokenizer.Types.SEPARATOR"),
         OP_CAPTURE: Symbol("GlintTokenizer.Types.OP_CAPTURE"),
         STRING: Symbol("GlintTokenizer.Types.STRING"),
@@ -243,8 +258,8 @@ class GlintTokenizer {
     // final operator names have all whitespace removed
     static Regexes = [
         // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
-        [ /(_?(?:[\d,]+\.[\d,]*|\.[\d,]+|[\d,]+\.?))(deg)?/, GlintTokenizer.Types.NUMBER ],
-        [ /%\s*of|<=>|[:<>!]=|[-+\/%*^=<>!@]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
+        [ /(_?(?:[\d,]+\.[\d,]*|\.[\d,]+|[\d,]+\.?))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
+        [ /%\s*of|<=>|[:<>!]=|[-+\/%*^=<>!@#]|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
@@ -253,6 +268,8 @@ class GlintTokenizer {
         [ /\)/, GlintTokenizer.Types.CLOSE_PAREN ],
         [ /\[/, GlintTokenizer.Types.OPEN_BRACKET ],
         [ /\]/, GlintTokenizer.Types.CLOSE_BRACKET ],
+        [ /\{/, GlintTokenizer.Types.OPEN_BRACE ],
+        [ /\}/, GlintTokenizer.Types.CLOSE_BRACE ],
         [ /"(?:[^"]|"")+"/, GlintTokenizer.Types.STRING ],
     ];
     
@@ -292,6 +309,7 @@ class GlintShunting {
     static Precedence = {
         "(":    { precedence: -10,  associativity: "left" },
         "[":    { precedence: -10,  associativity: "left" },
+        "{":    { precedence: -10,  associativity: "left" },
         ":=":   { precedence: 0,    associativity: "right" },
         "=":    { precedence: 5,    associativity: "left" },
         "<=":   { precedence: 5,    associativity: "left" },
@@ -301,6 +319,7 @@ class GlintShunting {
         "!=":   { precedence: 5,    associativity: "left" },
         "<=>":  { precedence: 6,    associativity: "left" },
         "`":    { precedence: 7,    associativity: "left" },
+        "#":    { precedence: 9,    associativity: "left" },
         "+":    { precedence: 10,   associativity: "left" },
         "-":    { precedence: 10,   associativity: "left" },
         "*":    { precedence: 20,   associativity: "left" },
@@ -661,18 +680,72 @@ class GlintInterpreter {
         if(value === "%of") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x * y / 100;
+            // return x * y / 100;
+            return this.evalOp("/", [ this.evalOp("*", [ x, y ]), 100 ]);
+        }
+        
+        if(value === "#") {
+            let [ x, y ] = args;
+            if(args.length === 1) {
+                if(typeof x.length !== "undefined") {
+                    return x.length;
+                }
+                assert(false, `Cannot monadic # on type ${Glint.getDebugTypes(x)}`);
+            }
+            this.assertArity(value, args, 2);
+            // TODO: better behavior for list y
+            if(Glint.isIntLike(x)) {
+                return [...Array(Number(x))].fill(y);
+            }
+            assert(false, `Cannot dyadic # types ${Glint.getDebugTypes(...args)}`);
         }
         
         if(value === "+") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x + y;
+            if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
+                return BigInt(x) + BigInt(y);
+            }
+            else if(args.every(Glint.isNumberLike)) {
+                return Number(x) + Number(y);
+            }
+            else if(args.every(Glint.isString)) {
+                return x + y;
+            }
+            else if(args.every(Glint.isList)) {
+                return [...x, ...y];
+            }
+            else if(args.every(Glint.isObject)) {
+                return {...x, ...y};
+            }
+            else {
+                assert(false, `Cannot add types ${Glint.getDebugTypes(...args)}`);
+            }
         }
         
         if(value === "-") {
             let [ x, y ] = args;
-            return args.length === 1 ? -x : x - y;
+            if(args.length === 1) {
+                return -x;
+            }
+            if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
+                return BigInt(x) - BigInt(y);
+            }
+            else if(args.every(Glint.isNumberLike)) {
+                return Number(x) - Number(y);
+            }
+            // else if(args.every(Glint.isString)) {
+                // return x + y;
+            // }
+            // else if(args.every(Glint.isList)) {
+                // return [...x, ...y];
+            // }
+            // else if(args.every(Glint.isObject)) {
+                // return {...x, ...y};
+            // }
+            else {
+                assert(false, `Cannot subtract types ${Glint.getDebugTypes(...args)}`);
+            }
         }
         
         if(value === "*") {
@@ -692,22 +765,73 @@ class GlintInterpreter {
         if(value === "/") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            if(typeof y === "function") {
+            if(Glint.isList(x) && Glint.isFunction(y)) {
                 return x.reduce((p, c) => y(p, c));
             }
-            return x / y;
+            if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
+                return BigInt(x) / BigInt(y);
+            }
+            else if(args.every(Glint.isNumberLike)) {
+                return Number(x) / Number(y);
+            }
+            // else if(args.every(Glint.isString)) {
+                // return x + y;
+            // }
+            // else if(args.every(Glint.isList)) {
+                // return [...x, ...y];
+            // }
+            // else if(args.every(Glint.isObject)) {
+                // return {...x, ...y};
+            // }
+            else {
+                assert(false, `Cannot divide types ${Glint.getDebugTypes(...args)}`);
+            }
         }
         
         if(value === "%") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x % y;
+            if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
+                return BigInt(x) % BigInt(y);
+            }
+            else if(args.every(Glint.isNumberLike)) {
+                return Number(x) % Number(y);
+            }
+            // else if(args.every(Glint.isString)) {
+                // return x + y;
+            // }
+            // else if(args.every(Glint.isList)) {
+                // return [...x, ...y];
+            // }
+            // else if(args.every(Glint.isObject)) {
+                // return {...x, ...y};
+            // }
+            else {
+                assert(false, `Cannot mod types ${Glint.getDebugTypes(...args)}`);
+            }
         }
         
         if(value === "^") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
-            return x ** y;
+            if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
+                return BigInt(x) ** BigInt(y);
+            }
+            else if(args.every(Glint.isNumberLike)) {
+                return Number(x) ** Number(y);
+            }
+            // else if(args.every(Glint.isString)) {
+                // return x + y;
+            // }
+            // else if(args.every(Glint.isList)) {
+                // return [...x, ...y];
+            // }
+            // else if(args.every(Glint.isObject)) {
+                // return {...x, ...y};
+            // }
+            else {
+                assert(false, `Cannot exponentiate types ${Glint.getDebugTypes(...args)}`);
+            }
         }
         
         if(value === "<=>") {
@@ -835,13 +959,21 @@ class GlintInterpreter {
         console.log(token);
         // let string = token.value;
         let [ number, suffix ] = token.groups;
-        number = parseFloat(number.replace(/,/g, "").replace(/_/, "-"));
+        number = number.replace(/,/g, "").replace(/_/, "-");
         if(suffix === "deg") {
-            number = number * Math.PI / 180;
+            number = parseFloat(number) * Math.PI / 180;
+        }
+        else if(suffix === "n" || suffix === "big") {
+            number = BigInt(number);
+        }
+        else if(suffix === "b") {
+            number = parseInt(number, 2);
         }
         else {
             assert(!suffix, "Cannot handle numeric suffix: " + suffix);
+            number = parseFloat(number);
         }
+        console.log("COOL!", number, ";", suffix);
         return number;
     }
     
