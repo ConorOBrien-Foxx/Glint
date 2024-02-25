@@ -46,7 +46,6 @@ Glint.accessIndex = (base, indices) =>
         : base[indices[0]]
     );
 
-
 Glint.DataTypes = {
     INT:        0b00000001,
     FLOAT:      0b00000010,
@@ -74,7 +73,7 @@ Glint.typeOf = arg => {
     if(Array.isArray(arg)) {
         return Glint.DataTypes.LIST;
     }
-    if(typeof arg === "function") {
+    if(typeof arg === "function" || arg instanceof GlintFunction) {
         return Glint.DataTypes.FUNCTION;
     }
     // TODO: more cases
@@ -125,6 +124,7 @@ Glint.isFunction = arg => Glint.typeMatches(arg, Glint.DataTypes.FUNCTION);
 Glint.isIntLike = arg => Glint.typeMatches(arg, Glint.DataTypes.INT_LIKE);
 Glint.isNumberLike = arg => Glint.typeMatches(arg, Glint.DataTypes.NUMBER_LIKE);
 
+Glint.customDisplay = Symbol("Glint.customDisplay");
 Glint._display = (value, ancestors = []) => {
     if(value instanceof Error) {
         return "Internal Error: " + value;
@@ -150,6 +150,13 @@ Glint._display = (value, ancestors = []) => {
     if(value === null) {
         return "null";
     }
+    if(value === undefined) {
+        return "undef";
+    }
+    if(value[Glint.customDisplay]) {
+        let nextAncestors = [...ancestors, value];
+        return value[Glint.customDisplay](ancestors);
+    }
     if(Number.isNaN(value)) {
         return "nan";
     }
@@ -159,12 +166,9 @@ Glint._display = (value, ancestors = []) => {
     if(value === -Infinity) {
         return "-inf";
     }
-    if(value === undefined) {
-        return "undef";
-    }
     if(typeof value === "function") {
         // TODO: better information
-        return `<fn @ ${value.length || "?"}>`;
+        return `<bare fn @ ${value.length || "?"}>`;
     }
     if(typeof value === "bigint") {
         return `${value}n`;
@@ -193,6 +197,46 @@ Glint._display = (value, ancestors = []) => {
 };
 // mask hidden parameter
 Glint.display = arg => Glint._display(arg);
+
+class GlintFunction {
+    constructor(fn) {
+        this.fn = fn;
+        this.name = "anonymous";
+        this.arity = null;
+        this.signature = null; // todo
+    }
+    
+    setName(name) {
+        this.name = name;
+        return this;
+    }
+    
+    setArity(arity) {
+        this.arity = arity;
+        return this;
+    }
+    
+    call(thisRef, ...args) {
+        return this.fn.call(thisRef, ...args);
+    }
+    
+    apply(thisRef, args = []) {
+        return this.fn.apply(thisRef, args);
+    }
+    
+    toString() {
+        if(this.arity === null) {
+            return `{{ Function ${this.name} }}`;
+        }
+        else {
+            return `{{ Function ${this.name}/${Glint.display(this.arity)} }}`;
+        }
+    }
+    
+    [Glint.customDisplay](ancestors) {
+        return this.toString();
+    }
+}
 
 Glint.deepCompare = (a, b) => {
     if (typeof a === "object" && typeof b === "object" && a !== null && b !== null) {
@@ -640,6 +684,7 @@ const SYMBOL_MAP = {
     "n": "\n",
     "r": "\r",
     "t": "\t",
+    "inf": "∞",
 };
 const symbolFromName = name => {
     return SYMBOL_MAP[name];
@@ -654,6 +699,7 @@ class GlintInterpreter {
             undef: undefined,
             nan: NaN,
             inf: Infinity,
+            ["∞"]: Infinity,
         };
     }
     
@@ -661,21 +707,38 @@ class GlintInterpreter {
         Object.assign(this.variables, {
             SYMBOL_MAP,
             sym: symbolFromName,
-            deg: n => n * Math.PI / 180,
-            c: (...args) => args,
             pi: Math.PI,
             e: Math.E,
-            sum: x => x.reduce((p, c) => p + c, 0),
-            size: x => x.length ?? x.size,
-            range: Glint.range,
-            sort: Glint.sort,
-            big: n => BigInt(n),
+            // functions
+            deg: new GlintFunction(n => n * Math.PI / 180)
+                .setName("deg")
+                .setArity(1),
+            c: new GlintFunction((...args) => args)
+                .setName("c")
+                .setArity(Infinity),
+            sum: new GlintFunction(x => x.reduce((p, c) => p + c, 0))
+                .setName("sum")
+                .setArity(1),
+            size: new GlintFunction(x => x.length ?? x.size)
+                .setName("size")
+                .setArity(1),
+            range: new GlintFunction(Glint.range)
+                .setName("range")
+                .setArity([1, 2, 3]),
+            sort: new GlintFunction(Glint.sort)
+                .setName("sort")
+                .setArity(1),
+            big: new GlintFunction(n => BigInt(n))
+                .setName("big")
+                .setArity(1),
         });
         let mathWords = [
             "sin", "cos", "tan", "sinh", "cosh", "tanh"
         ];
         for(let word of mathWords) {
-            this.variables[word] = Math[word];
+            this.variables[word] = new GlintFunction(Math[word])
+                .setName(word)
+                .setArity(Math[word].length);
         }
     }
     
@@ -704,10 +767,13 @@ class GlintInterpreter {
                     return this.evalTree(value);
                     // this.removeLocalScope();
                 };
-                this.variables[varName.value.value] = fn;
-                return fn;
+                this.variables[varName.value.value] = new GlintFunction(fn)
+                    .setName(varName.value.value)
+                    .setArity(params.length);
+                return this.variables[varName.value.value];
             }
             else {
+                // regular variable assignment
                 assert(varName.children === null, "Cannot handle nested assignment expression");
                 value = this.evalTree(value);
                 this.variables[varName.value.value] = value;
@@ -718,7 +784,7 @@ class GlintInterpreter {
         if(value[0] === "`") {
             let functionName = value.slice(1, -1);
             let fn = this.variables[functionName];
-            return fn(...args);
+            return fn.apply(null, args);
         }
         
         if(value === "%of") {
@@ -1082,7 +1148,8 @@ class GlintInterpreter {
             fns.push(result);
         }
         assert(fns.length === 1, `Cannot capture ${startingLength} ops`);
-        return fns[0];
+        return new GlintFunction(fns[0])
+            .setName(`[${ops.map(op => op.value).join(" ")}]`);
     }
     
     evalTree(tree) {
@@ -1112,8 +1179,8 @@ class GlintInterpreter {
             if(children === null) {
                 return variable;
             }
-            else if(typeof variable === "function") {
-                // TODO: function hold arguments
+            else if(Glint.isFunction(variable)) {
+                // TODO: custom function hold arguments
                 children = children.map(child => this.evalTree(child));
                 return variable.apply(this, children);
             }
