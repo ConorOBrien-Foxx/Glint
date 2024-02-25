@@ -147,17 +147,8 @@ Glint._display = (value, ancestors = []) => {
                 .join("; ")
             + " ]";
     }
-    if(typeof value === "object") {
-        let entries = Object.entries(value);
-        if(entries.length === 0) {
-            return ">[ ]";
-        }
-        let nextAncestors = [...ancestors, value];
-        return ">[ "
-            + Object.entries(value)
-                .map(([key, el]) => Glint._display(key, nextAncestors) + ": " + Glint._display(el, nextAncestors))
-                .join("; ")
-            + " ]";
+    if(value === null) {
+        return "null";
     }
     if(Number.isNaN(value)) {
         return "nan";
@@ -184,6 +175,18 @@ Glint._display = (value, ancestors = []) => {
         fPart = fPart.replace(/0+$/, "");
         fPart = fPart ? "." + fPart : "";
         return iPart + fPart;
+    }
+    if(typeof value === "object") {
+        let entries = Object.entries(value);
+        if(entries.length === 0) {
+            return ">[ ]";
+        }
+        let nextAncestors = [...ancestors, value];
+        return ">[ "
+            + Object.entries(value)
+                .map(([key, el]) => Glint._display(key, nextAncestors) + ": " + Glint._display(el, nextAncestors))
+                .join("; ")
+            + " ]";
     }
     // todo: better
     return "" + value;
@@ -706,6 +709,7 @@ class GlintInterpreter {
             }
             else {
                 assert(varName.children === null, "Cannot handle nested assignment expression");
+                value = this.evalTree(value);
                 this.variables[varName.value.value] = value;
                 return value;
             }
@@ -1055,13 +1059,30 @@ class GlintInterpreter {
     condenseCapturedOps(ops) {
         console.log("CONDENSED", ops.map(op => op.value));
         let fns = ops.map(op => (...args) => this.evalOp(op.value, args));
-        if(fns.length === 1) {
-            return fns[0];
+        let startingLength = fns.length;
+        while(fns.length > 1) {
+            let tail = fns.splice(-3);
+            console.log("TAIL!", tail);
+            let result;
+            if(tail.length === 1) {
+                result = tail[0];
+            }
+            else if(tail.length === 2) {
+                result = (...args) => {
+                    let head = args.length === 1 ? args : args.slice(0, -1);
+                    console.log("head", head, "of", args);
+                    return tail[0](...head, tail[1](args.at(-1)));
+                };
+            }
+            else if(tail.length === 3) {
+                result = (...args) => tail[1](tail[0](...args), tail[2](...args));
+            }
+            assert(result, `Error during condensation process`);
+            
+            fns.push(result);
         }
-        if(fns.length === 3) {
-            return (...args) => fns[1](fns[0](...args), fns[2](...args));
-        }
-        assert(false, `Cannot capture ${fns.length} ops`);
+        assert(fns.length === 1, `Cannot capture ${startingLength} ops`);
+        return fns[0];
     }
     
     evalTree(tree) {
