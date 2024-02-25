@@ -334,7 +334,7 @@ class GlintTokenizer {
         [ /\]/, GlintTokenizer.Types.CLOSE_BRACKET ],
         [ /\{/, GlintTokenizer.Types.OPEN_BRACE ],
         [ /\}/, GlintTokenizer.Types.CLOSE_BRACE ],
-        [ /"(?:[^"]|"")+"/, GlintTokenizer.Types.STRING ],
+        [ /"(?:[^"]|"")*"/, GlintTokenizer.Types.STRING ],
     ];
     
     parseToken() {
