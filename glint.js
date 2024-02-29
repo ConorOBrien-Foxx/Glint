@@ -46,6 +46,28 @@ Glint.accessIndex = (base, indices) =>
         : base[indices[0]]
     );
 
+Glint.console = {
+    silent: true,
+    log(...args) {
+        if(this.silent) {
+            return;
+        }
+        console.log(...args);
+    },
+    warn(...args) {
+        if(this.silent) {
+            return;
+        }
+        console.warn(...args);
+    },
+    error(...args) {
+        // if(this.silent) {
+            // return;
+        // }
+        console.error(...args);
+    },
+};
+
 Glint.DataTypes = {
     INT:        0b00000001,
     FLOAT:      0b00000010,
@@ -133,7 +155,7 @@ Glint._display = (value, ancestors = []) => {
         return value.toString();
     }
     if(ancestors.includes(value)) {
-        console.log(ancestors, value);
+        Glint.console.log(ancestors, value);
         return "[Circular]";
     }
     if(Array.isArray(value)) {
@@ -446,7 +468,7 @@ class GlintShunting {
                 });
             }
         }
-        console.log("Parenthesized:", this.tokens.filter(e=>e.type!==GlintTokenizer.Types.WHITESPACE).map(e => e.value).join` `);
+        Glint.console.log("Parenthesized:", this.tokens.filter(e=>e.type!==GlintTokenizer.Types.WHITESPACE).map(e => e.value).join` `);
     }
     
     isData(token) {
@@ -507,9 +529,9 @@ class GlintShunting {
     }
     
     parseToken(token) {
-        console.log("!!!! parsing", token.type, token.value);
-        console.log("Op stack:", this.operatorStack.map(e => e.value));
-        console.log("Arity stack:", this.arityStack);
+        Glint.console.log("!!!! parsing", token.type, token.value);
+        Glint.console.log("Op stack:", this.operatorStack.map(e => e.value));
+        Glint.console.log("Arity stack:", this.arityStack);
         if(this.isData(token)) {
             this.outputQueue.push(token);
             // operators following data are binary
@@ -591,7 +613,7 @@ class GlintShunting {
             this.flushTo(GlintTokenizer.Types.OPEN_PAREN);
             let openParen = this.operatorStack.pop();
             if(openParen.isFunctionCall) {
-                // console.log("handling function call", this.operatorStack.at(-1));
+                // Glint.console.log("handling function call", this.operatorStack.at(-1));
                 // handle function
                 let functionToken = this.operatorStack.pop();
                 functionToken.arity += this.arityStack.pop();
@@ -660,7 +682,7 @@ class GlintShunting {
             this.outputQueue.push(this.operatorStack.pop());
         }
 
-        console.log("Shunting yard:", this.debugOutputQueue());
+        Glint.console.log("Shunting yard:", this.debugOutputQueue());
         
         return this.outputQueue;
     }
@@ -1078,7 +1100,7 @@ class GlintInterpreter {
         let rpn = shunter.shuntingYard();
         let treeStack = [];
         for(let instruction of rpn) {
-            console.log("Making tree instruction", Glint.display(instruction));
+            Glint.console.log("Making tree instruction", Glint.display(instruction));
             if(instruction.arity === undefined) {
                 treeStack.push({ value: instruction, children: null });
             }
@@ -1095,7 +1117,7 @@ class GlintInterpreter {
     }
     
     parseNumber(token) {
-        console.log(token);
+        Glint.console.log(token);
         // let string = token.value;
         let [ number, suffix ] = token.groups;
         number = number.replace(/,/g, "").replace(/_/, "-");
@@ -1112,7 +1134,7 @@ class GlintInterpreter {
             assert(!suffix, "Cannot handle numeric suffix: " + suffix);
             number = parseFloat(number);
         }
-        console.log("COOL!", number, ";", suffix);
+        Glint.console.log("COOL!", number, ";", suffix);
         return number;
     }
     
@@ -1123,12 +1145,12 @@ class GlintInterpreter {
     }
     
     condenseCapturedOps(ops) {
-        console.log("CONDENSED", ops.map(op => op.value));
+        Glint.console.log("CONDENSED", ops.map(op => op.value));
         let fns = ops.map(op => (...args) => this.evalOp(op.value, args));
         let startingLength = fns.length;
         while(fns.length > 1) {
             let tail = fns.splice(-3);
-            console.log("TAIL!", tail);
+            Glint.console.log("TAIL!", tail);
             let result;
             if(tail.length === 1) {
                 result = tail[0];
@@ -1136,7 +1158,7 @@ class GlintInterpreter {
             else if(tail.length === 2) {
                 result = (...args) => {
                     let head = args.length === 1 ? args : args.slice(0, -1);
-                    console.log("head", head, "of", args);
+                    Glint.console.log("head", head, "of", args);
                     return tail[0](...head, tail[1](args.at(-1)));
                 };
             }
@@ -1158,7 +1180,7 @@ class GlintInterpreter {
         }
         let instruction = tree.value;
         let children = tree.children;
-        console.log("Evaluating:", instruction, children);
+        Glint.console.log("Evaluating:", instruction, children);
         if(instruction.type === GlintTokenizer.Types.NUMBER) {
             return this.parseNumber(instruction);
         }
@@ -1170,7 +1192,7 @@ class GlintInterpreter {
         }
         if(instruction.type === GlintTokenizer.Types.CLOSE_BRACKET) {
             // array
-            console.log("CHILDREN OF THE CLOSE BRACKET?", children);
+            Glint.console.log("CHILDREN OF THE CLOSE BRACKET?", children);
             return children.map(child => this.evalTree(child));
         }
         if(instruction.type === GlintTokenizer.Types.WORD) {
@@ -1193,7 +1215,7 @@ class GlintInterpreter {
             let fn = this.condenseCapturedOps(instruction.groups);
             if(children) {
                 // children = children.map(child => this.evalTree(child));
-                console.log("CHILDREN", children);
+                Glint.console.log("CHILDREN", children);
                 return fn(...children);
             }
             else {
