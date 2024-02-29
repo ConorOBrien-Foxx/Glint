@@ -1250,21 +1250,37 @@ if(typeof module !== "undefined") {
     interpreter.loadStandardLibrary();
     
     let index = 0;
+    let IN = [];
+    let OUT = [];
+    
+    interpreter.variables.IN = [];
+    interpreter.variables.OUT = [];
     
     const repl = async () => {
         while(true) {
-            let answer = await new Promise(resolve => rl.question(`IN(${index}) := `, resolve));
+            let answer = await new Promise(resolve => rl.question(` IN(${index}) := `, resolve));
+            
+            IN.push(answer);
+            interpreter.variables.IN = [...IN];
             
             if(answer === "exit") {
                 rl.close();
                 break;
             }
             
-            // TODO: actually include IN/OUT
-            let result = interpreter.eval(answer);
+            let result;
+            try {
+                result = interpreter.eval(answer);
+            }
+            catch(e) {
+                result = e;
+            }
             console.log(`OUT(${index}) := ${Glint.display(result)}`);
             console.log();
             index++;
+            
+            OUT.push(result);
+            interpreter.variables.OUT = [...OUT];
         }
     };
     
