@@ -796,6 +796,7 @@ class GlintInterpreter {
             }
             else {
                 // regular variable assignment
+                // TODO: there's something fishy here, as `x + y := 13` is not caught
                 assert(varName.children === null, "Cannot handle nested assignment expression");
                 value = this.evalTree(value);
                 this.variables[varName.value.value] = value;
@@ -898,7 +899,7 @@ class GlintInterpreter {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
             if(Glint.isList(x) && Glint.isFunction(y)) {
-                return x.reduce((p, c) => y(p, c));
+                return x.reduce((p, c) => y.call(null, p, c));
             }
             if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
                 return BigInt(x) / BigInt(y);
@@ -1034,10 +1035,6 @@ class GlintInterpreter {
             }
             else {
                 return [ x, y ];
-                // return [
-                    // ...(Array.isArray(x) ? x : [x]),
-                    // y
-                // ];
             }
         }
         
@@ -1236,55 +1233,63 @@ Glint.tokenize = string => {
     return tokenizer.getTokens();
 };
 
+Glint.GlintInterpreter = GlintInterpreter;
+Glint.GlintFunction = GlintFunction;
+Glint.GlintTokenizer = GlintTokenizer;
+Glint.GlintShunting = GlintShunting;
+
 if(typeof module !== "undefined") {
     module.exports = Glint;
     
-    const readline = require("readline");
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-    // node.js testing
-    // TODO: validate and exclude cases like "3 4 +" being valid
-    let interpreter = new GlintInterpreter();
-    interpreter.loadStandardLibrary();
-    
-    let index = 0;
-    let IN = [];
-    let OUT = [];
-    
-    interpreter.variables.IN = [];
-    interpreter.variables.OUT = [];
-    
-    const repl = async () => {
-        while(true) {
-            let answer = await new Promise(resolve => rl.question(` IN(${index}) := `, resolve));
-            
-            IN.push(answer);
-            interpreter.variables.IN = [...IN];
-            
-            if(answer === "exit") {
-                rl.close();
-                break;
+    if(require.main === module) {
+        
+        const readline = require("readline");
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        // node.js testing
+        // TODO: validate and exclude cases like "3 4 +" being valid
+        let interpreter = new GlintInterpreter();
+        interpreter.loadStandardLibrary();
+        
+        let index = 0;
+        let IN = [];
+        let OUT = [];
+        
+        interpreter.variables.IN = [];
+        interpreter.variables.OUT = [];
+        
+        const repl = async () => {
+            while(true) {
+                let answer = await new Promise(resolve => rl.question(` IN(${index}) := `, resolve));
+                
+                IN.push(answer);
+                interpreter.variables.IN = [...IN];
+                
+                if(answer === "exit") {
+                    rl.close();
+                    break;
+                }
+                
+                let result;
+                try {
+                    result = interpreter.eval(answer);
+                }
+                catch(e) {
+                    result = e;
+                }
+                console.log(`OUT(${index}) := ${Glint.display(result)}`);
+                console.log();
+                index++;
+                
+                OUT.push(result);
+                interpreter.variables.OUT = [...OUT];
             }
-            
-            let result;
-            try {
-                result = interpreter.eval(answer);
-            }
-            catch(e) {
-                result = e;
-            }
-            console.log(`OUT(${index}) := ${Glint.display(result)}`);
-            console.log();
-            index++;
-            
-            OUT.push(result);
-            interpreter.variables.OUT = [...OUT];
-        }
-    };
-    
-    repl();
+        };
+        
+        repl();
+    }
     
     // for(let s of process.argv.slice(2)) {
         // console.log("Input: ", s);
