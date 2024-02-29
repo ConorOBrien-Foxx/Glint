@@ -1239,14 +1239,41 @@ Glint.tokenize = string => {
 if(typeof module !== "undefined") {
     module.exports = Glint;
     
+    const readline = require("readline");
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
     // node.js testing
     // TODO: validate and exclude cases like "3 4 +" being valid
     let interpreter = new GlintInterpreter();
     interpreter.loadStandardLibrary();
-    for(let s of process.argv.slice(2)) {
-        console.log("Input: ", s);
-        console.log("Output: ", interpreter.eval(s));
-    }
+    
+    let index = 0;
+    
+    const repl = async () => {
+        while(true) {
+            let answer = await new Promise(resolve => rl.question(`IN(${index}) := `, resolve));
+            
+            if(answer === "exit") {
+                rl.close();
+                break;
+            }
+            
+            // TODO: actually include IN/OUT
+            let result = interpreter.eval(answer);
+            console.log(`OUT(${index}) := ${Glint.display(result)}`);
+            console.log();
+            index++;
+        }
+    };
+    
+    repl();
+    
+    // for(let s of process.argv.slice(2)) {
+        // console.log("Input: ", s);
+        // console.log("Output: ", interpreter.eval(s));
+    // }
     
     /*
     for(let s of `
