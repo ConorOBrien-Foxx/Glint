@@ -797,6 +797,10 @@ class GlintInterpreter {
             big: new GlintFunction(n => BigInt(n))
                 .setName("big")
                 .setArity(1),
+            // TODO: make work for web version
+            print: new GlintFunction((...args) => console.log(...args.map(e => e.toString())))
+                .setName("print")
+                .setArity(1),
         });
         let mathWords = [
             "sin", "cos", "tan", "sinh", "cosh", "tanh",
@@ -934,6 +938,12 @@ class GlintInterpreter {
             }
             else if(args.every(Glint.isNumberLike)) {
                 return Number(x) * Number(y);
+            }
+            else if(Glint.isNumberLike(x) && Glint.isString(y)) {
+                return y.repeat(x);
+            }
+            else if(Glint.isString(x) && Glint.isNumberLike(y)) {
+                return x.repeat(y);
             }
             else {
                 assert(false, `Cannot multiply types ${Glint.getDebugTypes(...args)}`);
@@ -1182,8 +1192,10 @@ class GlintInterpreter {
     
     parseRawString(token) {
         let string = token.value;
-        return string.slice(1, -1).replace(/\\(\\|\w+)/g,
-            (whole, word) => word === "\\" ? "\\" : symbolFromName(word) ?? whole);
+        return string
+            .slice(1, -1)
+            .replace(/\\(\\|\w+)/g, (whole, word) => word === "\\" ? "\\" : symbolFromName(word) ?? whole)
+            .replace(/""/g, '"');
     }
     
     condenseCapturedOps(ops) {
