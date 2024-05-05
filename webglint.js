@@ -25,6 +25,8 @@ window.addEventListener("load", function () {
         input.rows = 1;
         let line = document.createElement("div");
         line.className = "line";
+        let myOffset = interpreter.variables.OUT.length;
+        let tmpValue = null;
         
         input.addEventListener("keydown", ev => {
             if(ev.key === "Enter" && !ev.shiftKey) {
@@ -46,6 +48,39 @@ window.addEventListener("load", function () {
                 
                 lineIndex++;
                 addInputLine();
+            }
+            if(ev.key === "ArrowUp") {
+                // if(input.selectionEnd === 0) {
+                if(!input.value.slice(0, input.selectionStart).includes("\n")) {
+                    if(tmpValue === null) {
+                        tmpValue = input.value;
+                    }
+                    ev.preventDefault();
+                    myOffset--;
+                    if(myOffset < 0) {
+                        myOffset = 0;
+                    }
+                    input.value = interpreter.variables.IN.at(myOffset);
+                    input.selectionStart = input.value.length;
+                    fitTextToArea(input);
+                }
+            }
+            if(ev.key === "ArrowDown") {
+                // if(input.selectionEnd === input.value.length - 1) {
+                if(!input.value.slice(input.selectionEnd).includes("\n")) {
+                    ev.preventDefault();
+                    myOffset++;
+                    if(myOffset >= interpreter.variables.IN.length) {
+                        myOffset = interpreter.variables.IN.length;
+                        input.value = tmpValue;
+                        tmpValue = null;
+                    }
+                    else {
+                        input.value = interpreter.variables.IN.at(myOffset);
+                    }
+                    input.selectionStart = input.value.length;
+                    fitTextToArea(input);
+                }
             }
         });
         input.addEventListener("input", ev => {
@@ -75,7 +110,6 @@ window.addEventListener("load", function () {
         line.appendChild(label);
         line.appendChild(output);
         history.appendChild(line);
-        
     };
     addInputLine();
 });
