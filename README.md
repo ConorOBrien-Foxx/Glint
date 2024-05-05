@@ -2,6 +2,14 @@
 
 A calculator with features I find useful.
 ```
+
+numbers
+    3.4
+    .5
+    
+    "3." is NOT a number; even though there is no difference between 3 and 3.0, prefer "3.0" when you would feel tempted to use "3."
+
+
 natural operators
     x% of y     <=>     x / 100.0 * y
 

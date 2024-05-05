@@ -344,7 +344,7 @@ class GlintTokenizer {
     // final operator names have all whitespace removed
     static Regexes = [
         // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
-        [ /(_?(?:[\d,]+\.[\d,]*|\.[\d,]+|[\d,]+\.?))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
+        [ /(_?(?:[\d,]+(?:\.[\d,]+)?|\.[\d,]+))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
         [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
@@ -702,11 +702,16 @@ const SYMBOL_MAP = {
     "darr": "↓",
     "cdot": "·",
     "bullet": "●",
+    "bull": "●",
+    "ndash": "–",
     "mdash": "—",
     "n": "\n",
     "r": "\r",
     "t": "\t",
     "inf": "∞",
+    "ib": "‽",
+    "interro": "‽",
+    "interrobang": "‽",
 };
 const symbolFromName = name => {
     return SYMBOL_MAP[name];
@@ -755,7 +760,8 @@ class GlintInterpreter {
                 .setArity(1),
         });
         let mathWords = [
-            "sin", "cos", "tan", "sinh", "cosh", "tanh"
+            "sin", "cos", "tan", "sinh", "cosh", "tanh",
+            "asin", "acos", "atan", "asinh", "acosh", "atanh", "atan2",
         ];
         for(let word of mathWords) {
             this.variables[word] = new GlintFunction(Math[word])
