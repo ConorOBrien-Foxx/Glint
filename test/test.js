@@ -1,16 +1,357 @@
 const assert = require("assert");
 const Glint = require("./../glint.js");
 const {
+    AssertionError,
     GlintInterpreter,
     GlintFunction,
     GlintShunting,
     GlintTokenizer,
 } = Glint;
 
+// TODO: test shunting (including what should fail/error)
+describe("shunting", () => {
+    let shunter;
+    beforeEach(() => {
+        shunter = null;
+    });
+    
+    const anyChildHasKeyFrom = (object, keySet) => {
+        if(Array.isArray(object)) {
+            return object.some(child => anyChildHasKeyFrom(child, keySet));
+        }
+        return keySet.some(key => Object.hasOwn(object, key));
+    };
+    
+    const assertByKey = (keys, tokens, expectedValues) => {
+        assert.equal(tokens.length, expectedValues.length);
+        
+        tokens.forEach((token, idx) => {
+            let expected = expectedValues[idx];
+            
+            for(let key of keys) {
+                let left = token[key];
+                let right = expected[key];
+
+                if(left && right && [ left, right ].some(object =>
+                    anyChildHasKeyFrom(object, keys)
+                )) {
+                    // recursively compare
+                    assertByKey(keys, left, right);
+                }
+                else {
+                    assert.equal(token[key], expected[key]);
+                }
+            }
+        });
+    };
+    
+    const assertTokensEqual = (...args) =>
+        assertByKey(["type", "value"], ...args);
+    
+    const assertTokensEqualWithArity = (...args) =>
+        assertByKey(["type", "value", "arity"], ...args);
+    
+    const assertTokensEqualWithArityAndAdverbs = (...args) =>
+        assertByKey(["type", "value", "arity", "adverbs"], ...args);
+    
+    describe("automatic parenthesis insertion", () => {
+        it("runs in the constructor", () => {
+            const tokens = Glint.tokenize("f 5");
+            shunter = new GlintShunting(tokens);
+            
+            assertTokensEqual(shunter.tokens, [
+                { value: "f", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+            ]);
+        });
+        
+        it("inserts parentheses around long expressions", () => {
+            const tokens = Glint.tokenize("3+f 4*5");
+            shunter = new GlintShunting(tokens);
+            
+            assertTokensEqual(shunter.tokens, [
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", type: GlintTokenizer.Types.OPERATOR },
+                { value: "f", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "4", type: GlintTokenizer.Types.NUMBER },
+                { value: "*", type: GlintTokenizer.Types.OPERATOR },
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+            ]);
+        });
+        
+        it("works on multiple functions", () => {
+            const tokens = Glint.tokenize("f g 2+h 3");
+            shunter = new GlintShunting(tokens);
+            
+            assertTokensEqual(shunter.tokens, [
+                { value: "f", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "g", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "2", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", type: GlintTokenizer.Types.OPERATOR },
+                { value: "h", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+            ]);
+        });
+    });
+    
+    describe("literals", () => {
+        it("supports basic lists", () => {
+            const tokens = Glint.tokenize("[1;2;3]");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "1", type: GlintTokenizer.Types.NUMBER },
+                { value: "2", type: GlintTokenizer.Types.NUMBER },
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: "]", arity: 3, type: GlintTokenizer.Types.CLOSE_BRACKET },
+            ]);
+        });
+        
+        it("supports singleton lists", () => {
+            const tokens = Glint.tokenize("[ 5134 ]");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "5134", type: GlintTokenizer.Types.NUMBER },
+                { value: "]", arity: 1, type: GlintTokenizer.Types.CLOSE_BRACKET },
+            ]);
+        });
+        
+        it("supports empty lists", () => {
+            const tokens = Glint.tokenize("[]");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "]", arity: 0, type: GlintTokenizer.Types.CLOSE_BRACKET },
+            ]);
+        });
+        
+        it("errors for consecutive data", () => {
+            const tokens = Glint.tokenize("34 23");
+            shunter = new GlintShunting(tokens);
+            assert.throws(() => {
+                const output = shunter.shuntingYard();
+            }, AssertionError);
+        });
+    });
+    
+    describe("operators", () => {
+        it("puts a simple expression in postfix notation", () => {
+            const tokens = Glint.tokenize("93*2");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "93", type: GlintTokenizer.Types.NUMBER },
+                { value: "2", type: GlintTokenizer.Types.NUMBER },
+                { value: "*", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("respects basic precedence", () => {
+            const tokens = Glint.tokenize("314 + 159 * 265");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "314", type: GlintTokenizer.Types.NUMBER },
+                { value: "159", type: GlintTokenizer.Types.NUMBER },
+                { value: "265", type: GlintTokenizer.Types.NUMBER },
+                { value: "*", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "+", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("respects parentheses", () => {
+            const tokens = Glint.tokenize("(314 + 159) * 265");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "314", type: GlintTokenizer.Types.NUMBER },
+                { value: "159", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "265", type: GlintTokenizer.Types.NUMBER },
+                { value: "*", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("supports unary operators at start of expression", () => {
+            const tokens = Glint.tokenize("/300");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "300", type: GlintTokenizer.Types.NUMBER },
+                { value: "/", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("supports unary operators after parenthesis", () => {
+            const tokens = Glint.tokenize("5*(+300)");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: "300", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "*", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("parses unary operators first", () => {
+            const tokens = Glint.tokenize("+3 * 5");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: "*", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("supports unary operator after binary operator", () => {
+            const tokens = Glint.tokenize("3+*5");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: "*", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "+", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("supports chained unary operators", () => {
+            const tokens = Glint.tokenize("-/+5");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "/", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "-", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("supports unary operators in list", () => {
+            const tokens = Glint.tokenize("[ -1; *3+4; +/5 ]");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "1", type: GlintTokenizer.Types.NUMBER },
+                { value: "-", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: "*", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "4", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: "/", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "+", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                
+                { value: "]", arity: 3, type: GlintTokenizer.Types.CLOSE_BRACKET },
+            ]);
+        });
+        
+        it("errors with no second operand", () => {
+            const tokens = Glint.tokenize("3 +");
+            assert.throws(() => {
+                shunter = new GlintShunting(tokens);
+                const output = shunter.shuntingYard();
+            }, AssertionError);
+        });
+        
+        it("errors when given postfix code", () => {
+            const tokens = Glint.tokenize("3 4 +");
+            assert.throws(() => {
+                shunter = new GlintShunting(tokens);
+                const output = shunter.shuntingYard();
+            }, AssertionError);
+        });
+    });
+    
+    describe("adverbs", () => {
+        it("modifies a verb", () => {
+            const tokens = Glint.tokenize("123 .+ 14");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArityAndAdverbs(output, [
+                { value: "123", type: GlintTokenizer.Types.NUMBER },
+                { value: "14", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", arity: 2, type: GlintTokenizer.Types.OPERATOR, adverbs: [
+                    { value: ".", type: GlintTokenizer.Types.ADVERB },
+                ] },
+            ]);
+        });
+        
+        it("applies adverb to unary", () => {
+            const tokens = Glint.tokenize(".- 1993");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArityAndAdverbs(output, [
+                { value: "1993", type: GlintTokenizer.Types.NUMBER },
+                { value: "-", arity: 1, type: GlintTokenizer.Types.OPERATOR, adverbs: [
+                    { value: ".", type: GlintTokenizer.Types.ADVERB },
+                ] },
+            ]);
+        });
+        
+        it("stacks different adverbs on the same operator in the correct order", () => {
+            const tokens = Glint.tokenize("&.* 1");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArityAndAdverbs(output, [
+                { value: "1", type: GlintTokenizer.Types.NUMBER },
+                { value: "*", arity: 1, type: GlintTokenizer.Types.OPERATOR, adverbs: [
+                    { value: ".", type: GlintTokenizer.Types.ADVERB },
+                    { value: "&", type: GlintTokenizer.Types.ADVERB },
+                ] },
+            ]);
+        });
+        
+        it("errors when adverb applied to a noun", () => {
+            const tokens = Glint.tokenize("&1");
+            assert.throws(() => {
+                shunter = new GlintShunting(tokens);
+                const output = shunter.shuntingYard();
+            }, AssertionError);
+        });
+        
+        it("errors when adverb is alone", () => {
+            const tokens = Glint.tokenize("&");
+            assert.throws(() => {
+                shunter = new GlintShunting(tokens);
+                const output = shunter.shuntingYard();
+            }, AssertionError);
+        });
+        
+        it("errors when adverb is not followed by verb", () => {
+            const tokens = Glint.tokenize("3 + &");
+            assert.throws(() => {
+                shunter = new GlintShunting(tokens);
+                const output = shunter.shuntingYard();
+            }, AssertionError);
+        });
+    });
+});
+
 // TODO: test broadcast
 // TODO: test parsing literals
 // TODO: test condensing ops
-// TODO: test shunting (including what should fail/error)
 // TODO: better error reporting
 
 describe("operators", () => {

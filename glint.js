@@ -346,7 +346,7 @@ class GlintTokenizer {
         // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
         [ /(_?(?:[\d,]+(?:\.[\d,]+)?|\.[\d,]+))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
         [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
-        [ /[.]/, GlintTokenizer.Types.ADVERB ],
+        [ /[.&]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
         [ /;/, GlintTokenizer.Types.SEPARATOR ],
@@ -430,6 +430,8 @@ class GlintShunting {
         this.nextOpArity = 1;
         // initial parentheses are not function calls
         this.nextParenIsFunctionCall = false;
+        // detect consecutive data entries (illegal)
+        this.lastWasData = false;
         this.autoInsertParentheses();
     }
     
@@ -528,11 +530,22 @@ class GlintShunting {
         }
     }
     
+    assertNoAdverbs(token) {
+        // TODO: better error reporting e.g. where
+        assert(this.adverbStack.length === 0, `Unexpected adverb`);
+    }
+    
     parseToken(token) {
         Glint.console.log("!!!! parsing", token.type, token.value);
         Glint.console.log("Op stack:", this.operatorStack.map(e => e.value));
         Glint.console.log("Arity stack:", this.arityStack);
+        
+        let nextLastWasData = false;
+        let skipped = false;
+        
         if(this.isData(token)) {
+            assert(!this.lastWasData, "Illegal to have two consecutive pieces of data");
+            this.assertNoAdverbs(token);
             this.outputQueue.push(token);
             // operators following data are binary
             // e.g. 3 + 5
@@ -540,6 +553,7 @@ class GlintShunting {
             // we have data: make sure the arity is at least 1
             this.flagDataForTopArity();
             this.nextParenIsFunctionCall = true;
+            nextLastWasData = true;
         }
         else if(token.type === GlintTokenizer.Types.ADVERB) {
             this.adverbStack.push(token);
@@ -559,7 +573,7 @@ class GlintShunting {
             let tokenWithArity = {
                 ...token,
                 arity: this.nextOpArity,
-                adverbs: this.adverbStack.splice(0),
+                adverbs: this.adverbStack.splice(0).reverse(),
             };
             while (
                 this.operatorStack.length > 0 && this.comparePrecedence(tokenWithArity, this.operatorStack.at(-1))
@@ -666,10 +680,32 @@ class GlintShunting {
         }
         else if(this.shouldSkip(token)) {
             // do nothing
+            skipped = true;
         }
         else {
             assert(false, `Unhandled token: ${Glint.display(token)}`);
         }
+        
+        if(!skipped) {
+            this.lastWasData = nextLastWasData;
+        }
+    }
+    
+    assertFullOperands() {
+        let mockQueue = [...this.outputQueue];
+        
+        let stackSize = 0;
+        mockQueue.forEach(token => {
+            if(typeof token.arity !== "undefined") {
+                // TODO: inspect what arities the operator expects for error reporting, e.g. "expected 1 or 2" for "-"
+                assert(stackSize >= token.arity, `Insufficient operands for operator ${token.value}, expected ${token.arity}, got ${stackSize}`);
+                stackSize -= token.arity;
+                stackSize++;
+            }
+            else {
+                stackSize++;
+            }
+        });
     }
     
     shuntingYard() {
@@ -681,6 +717,9 @@ class GlintShunting {
         while(this.operatorStack.length > 0) {
             this.outputQueue.push(this.operatorStack.pop());
         }
+        
+        this.assertNoAdverbs();
+        this.assertFullOperands();
 
         Glint.console.log("Shunting yard:", this.debugOutputQueue());
         
@@ -1240,9 +1279,10 @@ Glint.tokenize = string => {
 };
 
 Glint.GlintInterpreter = GlintInterpreter;
-Glint.GlintFunction = GlintFunction;
+Glint.GlintFunction = GlintFunction; 
 Glint.GlintTokenizer = GlintTokenizer;
 Glint.GlintShunting = GlintShunting;
+Glint.AssertionError = AssertionError;
 
 if(typeof module !== "undefined") {
     module.exports = Glint;
