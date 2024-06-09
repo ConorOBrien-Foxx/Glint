@@ -6,10 +6,14 @@ window.addEventListener("load", function () {
     interpreter.loadStandardLibrary();
     interpreter.variables.IN = [];
     interpreter.variables.OUT = [];
+    // TODO: wrap these functions
     interpreter.variables.clear = () => {
         lineIndex = -1;
         history.innerHTML = "";
     };
+    interpreter.variables.input = () => new Promise((resolve, reject) => {
+        acceptInput({ label: "...", evaluate: false }).then(resolve);
+    });
     window.interpreter = interpreter;
     
     const fitTextToArea = textarea => {
@@ -17,67 +21,80 @@ window.addEventListener("load", function () {
         textarea.rows = lineCount;
     };
     
-    const addInputLine = () => {
-        let label = document.createElement("div");
-        label.className = "label";
-        label.textContent = `IN(${lineIndex}) := `;
-        let input = document.createElement("textarea");
-        input.rows = 1;
+    const acceptInput = async ({
+        label,
+        history: historyLines,
+        historyStart,
+        append=true,
+        evaluate=true
+    }) => new Promise((resolve, reject) => {
+        let myOffset = historyStart;
+        
         let line = document.createElement("div");
         line.className = "line";
-        let myOffset = interpreter.variables.OUT.length;
-        let tmpValue = null;
         
-        input.addEventListener("keydown", ev => {
+        let labelEl = document.createElement("div");
+        labelEl.className = "label";
+        labelEl.textContent = label;
+        let input = document.createElement("textarea");
+        input.rows = 1;
+        
+        let inputInProgress = null;
+        
+        input.addEventListener("keydown", async ev => {
             if(ev.key === "Enter" && !ev.shiftKey) {
                 // submit
                 ev.preventDefault();
                 input.readOnly = true;
-                interpreter.variables.IN[lineIndex] = input.value;
-                let result;
-                try {
-                    result = interpreter.eval(input.value);
+                if(historyLines) {
+                    historyLines[lineIndex] = input.value;
                 }
-                catch(e) {
-                    console.error(e);
-                    result = e;
+                if(evaluate) {
+                    let result;
+                    try {
+                        result = await interpreter.eval(input.value);
+                    }
+                    catch(e) {
+                        console.error(e);
+                        result = e;
+                    }
+                    finally {
+                        resolve(result);
+                    }
                 }
-                finally {
-                    addOutputLine(result);
+                else {
+                    resolve(input.value);
                 }
-                
-                lineIndex++;
-                addInputLine();
             }
-            if(ev.key === "ArrowUp" && input.selectionStart === 0 && input.selectionEnd === 0) {
-                // if(input.selectionEnd === 0) {
-                if(!input.value.slice(0, input.selectionStart).includes("\n")) {
-                    if(tmpValue === null) {
-                        tmpValue = input.value;
+            if(ev.key === "ArrowUp" && historyLines) {
+                if(input.selectionStart === 0 && input.selectionEnd === 0) {
+                // if(!input.value.slice(0, input.selectionStart).includes("\n")) {
+                    if(inputInProgress === null) {
+                        inputInProgress = input.value;
                     }
                     ev.preventDefault();
                     myOffset--;
                     if(myOffset < 0) {
                         myOffset = 0;
                     }
-                    input.value = interpreter.variables.IN.at(myOffset);
+                    input.value = historyLines.at(myOffset);
                     input.selectionStart = 0;//input.value.length;
                     input.selectionEnd = 0;
                     fitTextToArea(input);
                 }
             }
-            if(ev.key === "ArrowDown") {
+            if(ev.key === "ArrowDown" && historyLines) {
                 // if(input.selectionEnd === input.value.length - 1) {
                 if(!input.value.slice(input.selectionEnd).includes("\n")) {
                     ev.preventDefault();
                     myOffset++;
-                    if(myOffset >= interpreter.variables.IN.length) {
-                        myOffset = interpreter.variables.IN.length;
-                        input.value = tmpValue;
-                        tmpValue = null;
+                    if(myOffset >= historyLines.length) {
+                        myOffset = historyLines.length;
+                        input.value = inputInProgress;
+                        inputInProgress = null;
                     }
                     else {
-                        input.value = interpreter.variables.IN.at(myOffset);
+                        input.value = historyLines.at(myOffset);
                     }
                     input.selectionStart = input.value.length;
                     fitTextToArea(input);
@@ -88,10 +105,26 @@ window.addEventListener("load", function () {
             fitTextToArea(input);
         });
         
-        line.appendChild(label);
+        line.appendChild(labelEl);
         line.appendChild(input);
-        history.appendChild(line);
-        input.focus();
+        if(append) {
+            history.appendChild(line);
+            input.focus();
+        }
+    });
+    
+    const addInputLine = () => {
+        let myOffset = interpreter.variables.OUT.length;
+        acceptInput({
+            label: `IN(${lineIndex}) := `,
+            history: interpreter.variables.IN,
+            historyStart: myOffset,
+        })
+        .then(result => {
+            addOutputLine(result);
+            lineIndex++;
+            addInputLine();
+        });
     };
     const addOutputLine = result => {
         if(result === undefined) {
