@@ -11,8 +11,23 @@ window.addEventListener("load", function () {
         lineIndex = -1;
         history.innerHTML = "";
     };
-    interpreter.variables.input = () => new Promise((resolve, reject) => {
-        acceptInput({ label: "...", evaluate: false }).then(resolve);
+    let inputResolutionQueue = [];
+    let fireInput = (resolve, prompt=">") => {
+        acceptInput({ label: prompt, evaluate: false }).then(result => {
+            resolve(result);
+            if(inputResolutionQueue.length > 0) {
+                let { resolve, prompt } = inputResolutionQueue.shift();
+                fireInput(resolve, prompt);
+            }
+        });
+    };
+    interpreter.variables.input = prompt => new Promise((resolve, reject) => {
+        if(inputResolutionQueue.length === 0) {
+            fireInput(resolve, prompt);
+        }
+        else {
+            inputResolutionQueue.push({ prompt, resolve, reject });
+        }
     });
     window.interpreter = interpreter;
     

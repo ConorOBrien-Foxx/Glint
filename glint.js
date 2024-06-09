@@ -13,6 +13,24 @@ const assert = (expr, message = "Assertion failed") => {
     return true;
 };
 
+// TODO: tag functions as "synchronous" or "asynchronous", and call .map when synchronous.
+const mapInSeries = async function (base, fn, self=null) {
+    self ??= this;
+    let idx = 0;
+    let result = [];
+    let size = base.length ?? base.size;
+    // pre-allocate. who knows if this actually works
+    if(size) {
+        result.length = size;
+    }
+    for(let el of base) {
+        let inner = await fn.call(self, el, idx, base);
+        result[idx] = inner;
+        idx++;
+    }
+    return result;
+};
+
 // modified from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Errors/Cyclic_object_value
 const getGlintReplacer = () => {
     const ancestors = [];
@@ -345,7 +363,7 @@ class GlintTokenizer {
     static Regexes = [
         // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
         [ /(_?(?:[\d,]+(?:\.[\d,]+)?|\.[\d,]+))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
-        [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
+        [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#|]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.&]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
@@ -406,6 +424,7 @@ class GlintShunting {
         "!=":   { precedence: 5,    associativity: "left" },
         "<=>":  { precedence: 7,    associativity: "left" },
         "|>":   { precedence: 10,   associativity: "left" },
+        "|":    { precedence: 10,   associativity: "left" },
         "`":    { precedence: 13,   associativity: "left" },
         "#":    { precedence: 15,   associativity: "left" },
         "+":    { precedence: 20,   associativity: "left" },
@@ -797,6 +816,22 @@ class GlintInterpreter {
             big: new GlintFunction(n => BigInt(n))
                 .setName("big")
                 .setArity(1),
+            uniq: new GlintFunction(s => [...new Set(s)])
+                .setName("uniq")
+                .setArity(1),
+            // TODO: overload for arrays
+            split: new GlintFunction((s, by) => s.split(y))
+                .setName("split")
+                .setArity(2),
+            join: new GlintFunction((a, by) => a.join(by))
+                .setName("join")
+                .setArity(2),
+            lines: new GlintFunction(s => s.split("\n"))
+                .setName("lines")
+                .setArity(1),
+            unlines: new GlintFunction(s => s.join("\n"))
+                .setName("unlines")
+                .setArity(1),
             // TODO: make work for web version
             print: new GlintFunction((...args) => console.log(...args.map(e => e.toString())))
                 .setName("print")
@@ -820,7 +855,7 @@ class GlintInterpreter {
         );
     }
     
-    evalOp(value, args) {
+    async evalOp(value, args) {
         if(value === ":=") {
             let [ varName, value ] = args;
             if(varName.value.arity !== undefined) {
@@ -847,7 +882,7 @@ class GlintInterpreter {
                 // regular variable assignment
                 // TODO: there's something fishy here, as `x + y := 13` is not caught
                 assert(varName.children === null, "Cannot handle nested assignment expression");
-                value = this.evalTree(value);
+                value = await this.evalTree(value);
                 this.variables[varName.value.value] = value;
                 return value;
             }
@@ -863,7 +898,10 @@ class GlintInterpreter {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
             // return x * y / 100;
-            return this.evalOp("/", [ this.evalOp("*", [ x, y ]), 100 ]);
+            return this.evalOp("/", [
+                await this.evalOp("*", [ x, y ]),
+                100
+            ]);
         }
         
         if(value === "#") {
@@ -1022,11 +1060,11 @@ class GlintInterpreter {
             }
         }
         
-        if(value === "|>") {
+        if(value === "|>" || value === "|") {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
             if(Glint.isFunction(y)) {
-                return y(x);
+                return y.call(this, x);
             }
             assert(false, `Cannot pipe types ${Glint.getDebugTypes(...args)}`);
         }
@@ -1085,12 +1123,14 @@ class GlintInterpreter {
         if(value === ":") {
             let [ x, y ] = args;
             return args;
+            /*
             if(args.length === 1) {
                 return [ x ];
             }
             else {
                 return [ x, y ];
             }
+            */
         }
         
         assert(false, `Could not handle instruction ${value}@${args.length}`);
@@ -1102,18 +1142,19 @@ class GlintInterpreter {
         }
         else if(args.length === 1) {
             let [ xs ] = args;
+            // TODO: better check for iterability/indexability than `!!xs.map`
             return xs.map
-                ? xs.map(x => this.broadcast(fn, [ x ]))
+                ? mapInSeries(xs, x => this.broadcast(fn, [ x ]))
                 : fn(xs);
         }
         else if(args.length === 2) {
             let [ xs, ys ] = args;
             return xs.map && ys.map
-                ? xs.map((x, idx) => this.broadcast(fn, [ x, ys[idx] ]))
+                ? mapInSeries(xs, (x, idx) => this.broadcast(fn, [ x, ys[idx] ]))
                 : xs.map
-                    ? xs.map(x => this.broadcast(fn, [ x, ys ]))
+                    ? mapInSeries(xs, x => this.broadcast(fn, [ x, ys ]))
                     : ys.map
-                        ? ys.map(y => this.broadcast(fn, [ xs, y ]))
+                        ? mapInSeries(ys, y => this.broadcast(fn, [ xs, y ]))
                         : fn(xs, ys);
         }
         else {
@@ -1121,7 +1162,7 @@ class GlintInterpreter {
         }
     }
     
-    evalTreeOp(instruction, args) {
+    async evalTreeOp(instruction, args) {
         let { value, arity, adverbs } = instruction;
         adverbs ??= [];
         
@@ -1133,7 +1174,9 @@ class GlintInterpreter {
             hold[1] = true;
         }
         
-        args = args.map((arg, idx) => hold[idx] ? arg : this.evalTree(arg));
+        args = await mapInSeries(args,
+            (arg, idx) => hold[idx] ? arg : this.evalTree(arg)
+        );
         
         if(adverbs.length === 0) {
             return this.evalOp(instruction.value, args);
@@ -1228,7 +1271,7 @@ class GlintInterpreter {
             .setName(`[${ops.map(op => op.value).join(" ")}]`);
     }
     
-    evalTree(tree) {
+    async evalTree(tree) {
         if(tree === undefined) {
             return;
         }
@@ -1247,30 +1290,32 @@ class GlintInterpreter {
         if(instruction.type === GlintTokenizer.Types.CLOSE_BRACKET) {
             // array
             Glint.console.log("CHILDREN OF THE CLOSE BRACKET?", children);
-            return children.map(child => this.evalTree(child));
+            return mapInSeries(children, child => this.evalTree(child));
         }
         if(instruction.type === GlintTokenizer.Types.WORD) {
             assert(Object.hasOwn(this.variables, instruction.value), "Undefined variable " + instruction.value);
             let variable = this.variables[instruction.value];
+            if(children !== null) {
+                // TODO: custom function hold arguments
+                children = await mapInSeries(children, child => this.evalTree(child));
+            }
             if(children === null) {
                 return variable;
             }
             else if(Glint.isFunction(variable)) {
-                // TODO: custom function hold arguments
-                children = children.map(child => this.evalTree(child));
                 return variable.apply(this, children);
             }
             else {
-                children = children.map(child => this.evalTree(child));
                 return Glint.accessIndex(variable, children);
             }
         }
         if(instruction.type === GlintTokenizer.Types.OP_CAPTURE) {
             let fn = this.condenseCapturedOps(instruction.groups);
             if(children) {
-                // children = children.map(child => this.evalTree(child));
+                // TODO: do we need to await this?
+                // children = await mapInSeries(children, child => this.evalTree(child));
                 Glint.console.log("CHILDREN", children);
-                return fn(...children);
+                return fn.apply(this, children);
             }
             else {
                 return fn;
@@ -1279,6 +1324,7 @@ class GlintInterpreter {
         assert(false, `Could not handle operator type ${instruction.type.toString()} ${Glint.display(instruction)}`);
     }
     
+    // may return a promise
     eval(string) {
         let tree = this.makeTree(string);
         return this.evalTree(tree);
@@ -1332,7 +1378,7 @@ if(typeof module !== "undefined") {
                 
                 let result;
                 try {
-                    result = interpreter.eval(answer);
+                    result = await interpreter.eval(answer);
                 }
                 catch(e) {
                     result = e;
@@ -1351,7 +1397,7 @@ if(typeof module !== "undefined") {
     
     // for(let s of process.argv.slice(2)) {
         // console.log("Input: ", s);
-        // console.log("Output: ", interpreter.eval(s));
+        // console.log("Output: ", await interpreter.eval(s));
     // }
     
     /*
@@ -1362,7 +1408,7 @@ if(typeof module !== "undefined") {
         3^2^3
     `.trim().split("\n").map(e => e.trim())) {
         console.log(s);
-        console.log(interpreter.eval(s));
+        console.log(await interpreter.eval(s));
         console.log();
     }
     */
