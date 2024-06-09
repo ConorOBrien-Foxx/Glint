@@ -49,7 +49,7 @@ window.addEventListener("load", function () {
                 lineIndex++;
                 addInputLine();
             }
-            if(ev.key === "ArrowUp") {
+            if(ev.key === "ArrowUp" && input.selectionStart === 0 && input.selectionEnd === 0) {
                 // if(input.selectionEnd === 0) {
                 if(!input.value.slice(0, input.selectionStart).includes("\n")) {
                     if(tmpValue === null) {
@@ -61,7 +61,8 @@ window.addEventListener("load", function () {
                         myOffset = 0;
                     }
                     input.value = interpreter.variables.IN.at(myOffset);
-                    input.selectionStart = input.value.length;
+                    input.selectionStart = 0;//input.value.length;
+                    input.selectionEnd = 0;
                     fitTextToArea(input);
                 }
             }
