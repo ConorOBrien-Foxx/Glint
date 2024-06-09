@@ -94,11 +94,15 @@ Glint.DataTypes = {
     LIST:       0b00010000,
     OBJECT:     0b00100000,
     FUNCTION:   0b01000000,
+    NULL:       0b10000000,
 };
 Glint.DataTypes.INT_LIKE = Glint.DataTypes.INT | Glint.DataTypes.BIGINT;
 Glint.DataTypes.NUMBER_LIKE = Glint.DataTypes.INT | Glint.DataTypes.FLOAT | Glint.DataTypes.BIGINT;
 
 Glint.typeOf = arg => {
+    if(arg === null) {
+        return Glint.DataTypes.NULL;
+    }
     if(typeof arg === "bigint") {
         return Glint.DataTypes.BIGINT;
     }
@@ -135,6 +139,7 @@ Glint.TypesToNames = {
     [Glint.DataTypes.LIST]: "list",
     [Glint.DataTypes.OBJECT]: "obj",
     [Glint.DataTypes.FUNCTION]: "fn",
+    [Glint.DataTypes.NULL]: "null",
 };
 Glint.getStringType = type => {
     let display = [];
@@ -221,6 +226,7 @@ Glint._display = (value, ancestors = []) => {
         return iPart + fPart;
     }
     if(typeof value === "object") {
+        console.log(value);
         let entries = Object.entries(value);
         if(entries.length === 0) {
             return ">[ ]";

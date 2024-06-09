@@ -11,6 +11,9 @@ h1 {
     font-size: 36px;
     text-align: center;
 }
+h2 {
+    margin: 0;
+}
 h1 img {
     padding-right: 10px;
 }
@@ -61,4 +64,20 @@ textarea[readonly] {
 }
 .line textarea {
     flex-grow: 1;
+}
+
+nav {
+    text-align: center;
+}
+
+a, a:visited {
+    color: #58f;
+}
+a:hover {
+    color: #9cf;
+}
+
+textarea.semistatic {
+    width: 100%;
+    font-size: 18px;
 }
