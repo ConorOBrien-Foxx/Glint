@@ -373,6 +373,7 @@ class GlintTokenizer {
         [ /[.&]/, GlintTokenizer.Types.ADVERB ],
         [ /\w+/, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
+        [ /[\r\n]+/, GlintTokenizer.Types.LINEBREAK ],
         [ /;/, GlintTokenizer.Types.SEPARATOR ],
         [ /\(/, GlintTokenizer.Types.OPEN_PAREN ],
         [ /\)/, GlintTokenizer.Types.CLOSE_PAREN ],
@@ -546,7 +547,9 @@ class GlintShunting {
         ) {
             this.outputQueue.push(this.operatorStack.pop());
         }
-        assert(this.operatorStack.length > 0, `Error: Could not find matching flush target ${Glint.display(types)}`);
+        assert(types.length === 0 || this.operatorStack.length > 0,
+            `Error: Could not find matching flush target ${Glint.display(types)}`
+        );
     }
     
     flagDataForTopArity() {
@@ -582,6 +585,11 @@ class GlintShunting {
         }
         else if(token.type === GlintTokenizer.Types.ADVERB) {
             this.adverbStack.push(token);
+        }
+        else if(token.type === GlintTokenizer.Types.LINEBREAK) {
+            // TODO: check to see we are only breaking when syntactically valid
+            this.flushTo();
+            nextLastWasData = false;
         }
         else if(token.type === GlintTokenizer.Types.SEPARATOR) {
             // separates function arguments
@@ -781,6 +789,7 @@ const symbolFromName = name => {
     return SYMBOL_MAP[name];
 };
 
+// TODO: universal call syntax (e.g. f.g(h) expands to g(f, h))
 class GlintInterpreter {
     constructor() {
         this.variables = {
@@ -801,6 +810,22 @@ class GlintInterpreter {
             pi: Math.PI,
             e: Math.E,
             // functions
+            map: new GlintFunction(function (...args) {
+                if(args.length === 1) {
+                    let fn = args[0];
+                    return new GlintFunction(function (arr) {
+                        console.log(this);
+                        return this.variables.map.call(this, arr, fn);
+                    })
+                        .setName(`map:${fn.name}`)
+                        .setArity(1);
+                }
+                assert(args.length === 2, "Incorrect given to map (expected 1 or 2)");
+                let [ arr, fn ] = args;
+                return mapInSeries.call(this, arr, fn);
+            })
+                .setName("map")
+                .setArity([2, 1]),
             deg: new GlintFunction(n => n * Math.PI / 180)
                 .setName("deg")
                 .setArity(1),
@@ -824,6 +849,9 @@ class GlintInterpreter {
                 .setArity(1),
             uniq: new GlintFunction(s => [...new Set(s)])
                 .setName("uniq")
+                .setArity(1),
+            eval: new GlintFunction(GlintInterpreter.prototype.eval)
+                .setName("eval")
                 .setArity(1),
             // TODO: overload for arrays
             split: new GlintFunction((s, by) => s.split(y))
@@ -1127,7 +1155,7 @@ class GlintInterpreter {
         }
         
         if(value === ":") {
-            let [ x, y ] = args;
+            // let [ x, y ] = args;
             return args;
             /*
             if(args.length === 1) {
@@ -1212,9 +1240,11 @@ class GlintInterpreter {
                 });
             }
         }
-        assert(treeStack.length <= 1,
-            `Expected exactly 0 or 1 expressions on the treeStack at the end, got ${treeStack.length}`);
-        return treeStack[0];
+        /*
+        assert(treeStack.length === expectedExpressionCount,
+            `Expected exactly ${expectedExpressionCount} expressions on the treeStack at the end, got ${treeStack.length}`);
+            */
+        return treeStack;
     }
     
     parseNumber(token) {
@@ -1331,9 +1361,15 @@ class GlintInterpreter {
     }
     
     // may return a promise
-    eval(string) {
-        let tree = this.makeTree(string);
-        return this.evalTree(tree);
+    async eval(string) {
+        let trees = this.makeTree(string);
+        
+        let resultValue = null;
+        for(let tree of trees) {
+            resultValue = await this.evalTree(tree);
+        }
+        
+        return resultValue;
     }
 }
 

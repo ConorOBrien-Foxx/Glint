@@ -8,7 +8,10 @@ window.addEventListener("load", function () {
     const input = document.getElementById("input");
     const output = document.getElementById("output");
     
+    code.focus();
+    
     const runCode = async (code, input) => {
+        output.value = "";
         let interpreter = new GlintInterpreter();
         interpreter.loadStandardLibrary();
         let inputPointer = 0;
@@ -38,6 +41,13 @@ window.addEventListener("load", function () {
             inputPointer = input.length;
             return result;
         };
+        interpreter.variables.print = new GlintFunction((...args) => {
+            let repr = args.map(e => e.toString());
+            output.value += repr.join(" ");
+            console.log(...repr);
+        })
+            .setName("print")
+            .setArity(1);
         let result;
         try {
             result = await interpreter.eval(code);
@@ -47,7 +57,10 @@ window.addEventListener("load", function () {
             result = e;
         }
         finally {
-            output.value = Glint.display(result);
+            if(output.value) {
+                output.value += "\n---------------------\n";
+            }
+            output.value += Glint.display(result);
             fitTextToArea(output);
         }
     };
