@@ -57,12 +57,11 @@ const getGlintReplacer = () => {
 const Glint = {};
 // TODO: remove error message when we have multi-index thingies
 Glint.accessIndex = (base, indices) =>
-    assert(indices.length === 1, `Cannot index ${indices.length} parameters into ${Glint.display(base)}`)
-            && (
-    base.at
-        ? base.at(...indices)
-        : base[indices[0]]
-    );
+    indices.length === 1
+        ? base.at
+            ? base.at(indices[0])
+            : base[indices[0]]
+        : Glint.accessIndex(Glint.accessIndex(base, [ indices[0] ]), indices.slice(1));
 
 Glint.console = {
     silent: true,
@@ -929,6 +928,18 @@ class GlintInterpreter {
             pi: Math.PI,
             e: Math.E,
             // functions
+            eye: new GlintFunction(n => {
+                let res = Array(n);
+                for(let i = 0; i < n; i++) {
+                    res[i] = Array(n);
+                    for(let j = 0; j < n; j++) {
+                        res[i][j] = i === j ? 1 : 0;
+                    }
+                }
+                return res;
+            })
+                .setName("eye")
+                .setArity(1),
             map: new GlintFunction(function (...args) {
                 if(args.length === 1) {
                     let fn = args[0];
