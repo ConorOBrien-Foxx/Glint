@@ -587,9 +587,11 @@ class GlintShunting {
             this.adverbStack.push(token);
         }
         else if(token.type === GlintTokenizer.Types.LINEBREAK) {
+            console.log("separator encountered");
             // TODO: check to see we are only breaking when syntactically valid
             this.flushTo();
             nextLastWasData = false;
+            this.nextParenIsFunctionCall = false;
         }
         else if(token.type === GlintTokenizer.Types.SEPARATOR) {
             // separates function arguments
@@ -624,6 +626,8 @@ class GlintShunting {
                 // XXX: it's probably sinful to pop from the outputQueue but whatever.
                 // TODO: allow adverbs to apply to function callers
                 let functionHandle = this.outputQueue.pop();
+                /*
+                console.log("Opcall funciton handle:", functionHandle);
                 if(typeof functionHandle.arity === "undefined") {
                     let functionToken = {
                         ...functionHandle,
@@ -632,13 +636,15 @@ class GlintShunting {
                     this.operatorStack.push(functionToken);
                 }
                 else {
-                    this.outputQueue.push(functionHandle);
-                    this.operatorStack.push({
-                        type: GlintTokenizer.Types.OPERATOR,
-                        value: "@",
-                        arity: 1, // add 1 because we are gonna have another item on stack
-                    });
+                    //
                 }
+                */
+                this.outputQueue.push(functionHandle);
+                this.operatorStack.push({
+                    type: GlintTokenizer.Types.OPERATOR,
+                    value: "@",
+                    arity: 1, // add 1 because we are gonna have another item on stack, in addition to the 1 we already have
+                });
                 this.arityStack.push(0);
                 this.operatorStack.push({
                     ...token,
@@ -891,10 +897,13 @@ class GlintInterpreter {
     
     async evalOp(value, args) {
         if(value === ":=") {
-            let [ varName, value ] = args;
-            if(varName.value.arity !== undefined) {
+            let [ varDefinition, value ] = args;
+            console.log(":=", varDefinition, value);
+            if(varDefinition.value.type === GlintTokenizer.Types.OPERATOR && varDefinition.value.value === "@") {
                 // function definition
-                let params = varName.children.map(child => child.value.value);
+                let [ varName, ...varArgs ] = varDefinition.children;
+                
+                let params = varArgs.map(child => child.value.value);
                 let fn = (...args) => {
                     // TODO: better scoping
                     // this.addLocalScope(Object.fromEntries(params.map((param, idx) => [ param, args[idx] ])));
@@ -1151,7 +1160,12 @@ class GlintInterpreter {
         
         if(value === "@") {
             let [ base, ...indices ] = args;
-            return Glint.accessIndex(base, indices);
+            if(Glint.isFunction(base)) {
+                return base.apply(this, indices);
+            }
+            else {
+                return Glint.accessIndex(base, indices);
+            }
         }
         
         if(value === ":") {
