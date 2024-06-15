@@ -24,7 +24,9 @@ const mapInSeries = async function (base, fn, self=null) {
         result.length = size;
     }
     for(let el of base) {
-        let inner = await fn.call(self, el, idx, base);
+        let inner = fn.callPermissive
+            ? await fn.callPermissive(self, el, idx, base)
+            : await fn.call(self, el, idx, base);
         result[idx] = inner;
         idx++;
     }
@@ -248,6 +250,7 @@ class GlintFunction {
         this.fn = fn;
         this.name = "anonymous";
         this.arity = null;
+        this.maxArity = null;
         this.signature = null; // todo
     }
     
@@ -263,7 +266,14 @@ class GlintFunction {
     
     setArity(arity) {
         this.arity = arity;
+        this.maxArity = Array.isArray(arity) ? Math.max(...arity) : arity;
         return this;
+    }
+    
+    copy() {
+        let res = new GlintFunction(this.fn);
+        Object.assign(res, this);
+        return res;
     }
     
     call(thisRef, ...args) {
@@ -272,6 +282,18 @@ class GlintFunction {
     
     apply(thisRef, args = []) {
         return this.fn.apply(thisRef, args);
+    }
+    
+    fixArity(args) {
+        return args.slice(0, this.maxArity ?? args.length);
+    }
+    
+    callPermissive(thisRef, ...args) {
+        return this.fn.call(thisRef, ...this.fixArity(args));
+    }
+    
+    applyPermissive(thisRef, ...args) {
+        return this.fn.apply(thisRef, this.fixArity(args));
     }
     
     toString() {
@@ -1023,7 +1045,7 @@ class GlintInterpreter {
     async evalOp(value, args) {
         if(value === ":=") {
             let [ varDefinition, value ] = args;
-            console.log(":=", varDefinition, value);
+            Glint.console.log(":=", varDefinition, value);
             if(varDefinition.value.type === GlintTokenizer.Types.OPERATOR && varDefinition.value.value === "@") {
                 // function definition
                 let [ varName, ...varArgs ] = varDefinition.children;
@@ -1429,7 +1451,7 @@ class GlintInterpreter {
         });
         
         let glintFn = new GlintFunction(null)
-            .setName(`[${ops.map(op => op.value).join(" ")}]`);
+            .setName(`{${ops.map(op => op.value).join(" ")}}`);
         
         assert(fns.length !== 0, "TODO: handle empty lambda");
         
@@ -1446,13 +1468,15 @@ class GlintInterpreter {
                 // e.g. {2/}
                 glintFn.setFn(async function (...args) {
                     return g.fn.call(this, await f.fn.call(this), ...args);
-                });
+                })
+                    .setArity(1);
             }
             else if(!f.nilad && g.nilad) {
                 // e.g. {-1}
                 glintFn.setFn(async function (...args) {
                     return g.fn.call(this, ...args, await f.fn.call(this));
-                });
+                })
+                    .setArity(1);
             }
             else {
                 assert(false, "No behavior implemented yet for consecutive functions");
