@@ -226,7 +226,7 @@ Glint._display = (value, ancestors = []) => {
         return iPart + fPart;
     }
     if(typeof value === "object") {
-        console.log(value);
+        Glint.console.log(value);
         let entries = Object.entries(value);
         if(entries.length === 0) {
             return ">[ ]";
@@ -254,6 +254,11 @@ class GlintFunction {
     
     setName(name) {
         this.name = name;
+        return this;
+    }
+    
+    setFn(fn) {
+        this.fn = fn;
         return this;
     }
     
@@ -331,6 +336,7 @@ Glint.range = (min, max, step) => {
 Glint.sort = sortable => 
     [...sortable].sort(Glint.deepCompare);
 
+const WORD_REGEX = /\w+/;
 class GlintTokenizer {
     constructor(string) {
         this.string = string;
@@ -363,15 +369,16 @@ class GlintTokenizer {
         SEPARATOR: Symbol("GlintTokenizer.Types.SEPARATOR"),
         OP_CAPTURE: Symbol("GlintTokenizer.Types.OP_CAPTURE"),
         STRING: Symbol("GlintTokenizer.Types.STRING"),
+        LAMBDA: Symbol("GlintTokenizer.Types.LAMBDA"),
     };
     // TODO: accept custom operators
     // final operator names have all whitespace removed
     static Regexes = [
-        // TODO: better comma-in-number verification (e.g. ,,,3., is a valid number)
+        // TODO: better comma-in-number verification (e.g. ,,,3., shouldn't be a valid number)
         [ /(_?(?:[\d,]+(?:\.[\d,]+)?|\.[\d,]+))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
         [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#|]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.&]/, GlintTokenizer.Types.ADVERB ],
-        [ /\w+/, GlintTokenizer.Types.WORD ],
+        [ WORD_REGEX, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
         [ /[\r\n]+/, GlintTokenizer.Types.LINEBREAK ],
         [ /;/, GlintTokenizer.Types.SEPARATOR ],
@@ -396,7 +403,7 @@ class GlintTokenizer {
                 groups: data.groups,
             });
             if(type === GlintTokenizer.Types.OPERATOR) {
-                // remove whitespace
+                // remove whitespace; normalize e.g. "%  of" -> "%of"
                 this.tokens.at(-1).value = this.tokens.at(-1).value.replace(/\s+/g, "");
             }
             return true;
@@ -405,11 +412,87 @@ class GlintTokenizer {
     }
     
     getTokens() {
-        
         while(this.parseToken()) {
             // pass
         }
         assert(this.idx >= this.string.length, `Could not parse entire string, stopped at index ${this.idx}/${this.string.length}`);
+        
+        // second pass: coalesce lambda groups { 2 * + } e.g. to {} (groups 2,*,+)
+        let iterate = this.tokens.splice(0);
+        let buildStack = [];
+        for(let token of iterate) {
+            let pushToken = null;
+            if(token.type === GlintTokenizer.Types.OPEN_BRACE) {
+                buildStack.push([]);
+            }
+            else if(token.type === GlintTokenizer.Types.CLOSE_BRACE) {
+                let groups = buildStack.pop();
+                
+                let firstColonIndex = groups.findIndex(c => c.value === ":");
+                let isValidExplicitLambda = false;
+                if(firstColonIndex !== -1) {
+                    // explicit lambda
+                    let args = groups.slice(0, firstColonIndex)
+                        .map(arg => arg.value)
+                        .filter(arg => /\S/.test(arg));
+                    // TODO: more sophisticated argument checking
+                    // TODO: pattern matching expressions in args?? idk
+                    let isValidExplicitLambda = args.every((e, idx) =>
+                        idx % 2 === 0
+                            ? e.match(WORD_REGEX)?.[0] === e
+                            : e === ";"
+                    );
+                    if(isValidExplicitLambda) {
+                        let body = groups.slice(firstColonIndex + 1);
+                        
+                        pushToken = [
+                            {
+                                type: GlintTokenizer.Types.LAMBDA,
+                                explicit: true,
+                                value: "{}",
+                                groups: args.filter(arg => arg !== ";")
+                            },
+                            {
+                                type: GlintTokenizer.Types.OPEN_BRACE,
+                                value: "{",
+                            },
+                            ...body,
+                            {
+                                type: GlintTokenizer.Types.CLOSE_BRACE,
+                                value: "}",
+                            },
+                        ];
+                    }
+                }
+                
+                // if we did not already set an explicit lambda
+                if(!pushToken) {
+                    pushToken = {
+                        type: GlintTokenizer.Types.LAMBDA,
+                        explicit: false,
+                        value: "{}",
+                        groups,
+                    };
+                }
+            }
+            else {
+                pushToken = token;
+            }
+            
+            if(pushToken !== null) {
+                if(!Array.isArray(pushToken)) {
+                    pushToken = [ pushToken ];
+                }
+                if(buildStack.length) {
+                    buildStack.at(-1).push(...pushToken);
+                }
+                else {
+                    this.tokens.push(...pushToken);
+                }
+            }
+        }
+        
+        Glint.console.log(this.tokens);
         
         return this.tokens;
     }
@@ -420,7 +503,7 @@ class GlintShunting {
     static Precedence = {
         "(":    { precedence: -10,  associativity: "left" },
         "[":    { precedence: -10,  associativity: "left" },
-        // "{":    { precedence: -10,  associativity: "left" },
+        "{":    { precedence: -10,  associativity: "left" },
         ":=":   { precedence: 0,    associativity: "right" },
         ":":    { precedence: 3,    associativity: "left" },
         "=":    { precedence: 5,    associativity: "left" },
@@ -442,6 +525,18 @@ class GlintShunting {
         "%":    { precedence: 30,   associativity: "left" },
         "^":    { precedence: 40,   associativity: "right" },
         "@":    { precedence: 90,   associativity: "left" },
+    };
+    
+    static isData(token) {
+        return token.type === GlintTokenizer.Types.NUMBER
+            || token.type === GlintTokenizer.Types.WORD
+            || token.type === GlintTokenizer.Types.STRING
+            || token.type === GlintTokenizer.Types.LAMBDA;
+    }
+    
+    static isDataStart(token) {
+        return GlintShunting.isData(token)
+            || token.type === GlintTokenizer.Types.OPEN_BRACKET;
     }
     
     constructor(tokens) {
@@ -500,14 +595,11 @@ class GlintShunting {
     }
     
     isData(token) {
-        return token.type === GlintTokenizer.Types.NUMBER
-            || token.type === GlintTokenizer.Types.WORD
-            || token.type === GlintTokenizer.Types.STRING;
+        return GlintShunting.isData(token);
     }
     
     isDataStart(token) {
-        return this.isData(token)
-            || token.type === GlintTokenizer.Types.OPEN_BRACKET;
+        return GlintShunting.isDataStart(token);
     }
     
     getPrecedenceInfo(value) {
@@ -587,7 +679,7 @@ class GlintShunting {
             this.adverbStack.push(token);
         }
         else if(token.type === GlintTokenizer.Types.LINEBREAK) {
-            console.log("separator encountered");
+            Glint.console.log("separator encountered");
             // TODO: check to see we are only breaking when syntactically valid
             this.flushTo();
             nextLastWasData = false;
@@ -681,7 +773,7 @@ class GlintShunting {
         }
         else if(token.type === GlintTokenizer.Types.OPEN_BRACKET) {
             this.arityStack.push(0);
-                this.operatorStack.push(token);
+            this.operatorStack.push(token);
             // operators immediately following an open bracket are necessarily unary
             // e.g. [+3 * 5]
             this.nextOpArity = 1;
@@ -696,6 +788,7 @@ class GlintShunting {
             
             let arity = this.arityStack.pop();
             if(arity === 0 && opsFlushed > 0) {
+                assert(false, "Capture op [...] not currently implemented.");
                 // capture op
                 // XXX: more sinful output queue popping
                 let ops = this.outputQueue.splice(-opsFlushed);
@@ -716,6 +809,26 @@ class GlintShunting {
             this.nextOpArity = 2;
             // []() is an indexing/call expression
             this.nextParenIsFunctionCall = true;
+        }
+        else if(token.type === GlintTokenizer.Types.OPEN_BRACE) {
+            // explicit lambda body
+            this.arityStack.push(0);
+            this.operatorStack.push({
+                ...token,
+                outputQueueStartIndex: this.outputQueue.length,
+            });
+            this.nextOpArity = 1;
+            this.nextParenIsFunctionCall = false;
+        }
+        else if(token.type === GlintTokenizer.Types.CLOSE_BRACE) {
+            this.flushTo(GlintTokenizer.Types.OPEN_BRACE);
+            let brace = this.operatorStack.pop();
+            let body = this.outputQueue.splice(brace.outputQueueStartIndex);
+            let lambda = this.outputQueue.pop();
+            this.outputQueue.push({
+                ...lambda,
+                groups: [ lambda.groups, body ],
+            });
         }
         else if(this.shouldSkip(token)) {
             // do nothing
@@ -820,7 +933,7 @@ class GlintInterpreter {
                 if(args.length === 1) {
                     let fn = args[0];
                     return new GlintFunction(function (arr) {
-                        console.log(this);
+                        Glint.console.log(this);
                         return this.variables.map.call(this, arr, fn);
                     })
                         .setName(`map:${fn.name}`)
@@ -880,6 +993,7 @@ class GlintInterpreter {
         let mathWords = [
             "sin", "cos", "tan", "sinh", "cosh", "tanh",
             "asin", "acos", "atan", "asinh", "acosh", "atanh", "atan2",
+            "random",
         ];
         for(let word of mathWords) {
             this.variables[word] = new GlintFunction(Math[word])
@@ -902,31 +1016,19 @@ class GlintInterpreter {
             if(varDefinition.value.type === GlintTokenizer.Types.OPERATOR && varDefinition.value.value === "@") {
                 // function definition
                 let [ varName, ...varArgs ] = varDefinition.children;
-                
+                varName = varName.value.value;
                 let params = varArgs.map(child => child.value.value);
-                let fn = (...args) => {
-                    // TODO: better scoping
-                    // this.addLocalScope(Object.fromEntries(params.map((param, idx) => [ param, args[idx] ])));
-                    
-                    // for now, variables get set in GLOBAL SCOPE >:|
-                    params.forEach((param, idx) => {
-                        this.variables[param] = args[idx];
-                    });
-                    
-                    return this.evalTree(value);
-                    // this.removeLocalScope();
-                };
-                this.variables[varName.value.value] = new GlintFunction(fn)
-                    .setName(varName.value.value)
-                    .setArity(params.length);
-                return this.variables[varName.value.value];
+                
+                let fn = this.makeExplicitLambda(params, value);
+                this.variables[varName] = fn.setName(varName);
+                return this.variables[varName];
             }
             else {
                 // regular variable assignment
                 // TODO: there's something fishy here, as `x + y := 13` is not caught
-                assert(varName.children === null, "Cannot handle nested assignment expression");
+                assert(varDefinition.children === null, "Cannot handle nested assignment expression");
                 value = await this.evalTree(value);
-                this.variables[varName.value.value] = value;
+                this.variables[varDefinition.value.value] = value;
                 return value;
             }
         }
@@ -1236,11 +1338,13 @@ class GlintInterpreter {
         }
     }
     
-    makeTree(string) {
-        let tokenizer = new GlintTokenizer(string);
-        let tokens = tokenizer.getTokens();
-        let shunter = new GlintShunting(tokens);
-        let rpn = shunter.shuntingYard();
+    makeTree(rpn) {
+        if(!Array.isArray(rpn)) {
+            let tokenizer = new GlintTokenizer(rpn);
+            let tokens = tokenizer.getTokens();
+            let shunter = new GlintShunting(tokens);
+            rpn = shunter.shuntingYard();
+        }
         let treeStack = [];
         for(let instruction of rpn) {
             Glint.console.log("Making tree instruction", Glint.display(instruction));
@@ -1291,39 +1395,126 @@ class GlintInterpreter {
             .replace(/""/g, '"');
     }
     
-    condenseCapturedOps(ops) {
+    async condenseCapturedOps(ops) {
+        Glint.console.log(ops);
+        // TODO: handle explicit, e.g., things containing `:`
+        // TODO: handle adverbs
         Glint.console.log("CONDENSED", ops.map(op => op.value));
-        let fns = ops.map(op => (...args) => this.evalOp(op.value, args));
-        let startingLength = fns.length;
-        while(fns.length > 1) {
-            let tail = fns.splice(-3);
-            Glint.console.log("TAIL!", tail);
-            let result;
-            if(tail.length === 1) {
-                result = tail[0];
-            }
-            else if(tail.length === 2) {
-                result = (...args) => {
-                    let head = args.length === 1 ? args : args.slice(0, -1);
-                    Glint.console.log("head", head, "of", args);
-                    return tail[0](...head, tail[1](args.at(-1)));
+        let fns = ops.map(op => {
+            if(GlintShunting.isData(op)) {
+                return {
+                    nilad: true,
+                    // TODO: figure out whether this actually supposed to bind to innermost this instance, or if it should instead be an arrow function
+                    // this might be relevant to scope
+                    fn: function (...args) { return this.evalTree({ value: op }); },
                 };
             }
-            else if(tail.length === 3) {
-                result = (...args) => tail[1](tail[0](...args), tail[2](...args));
+            else {
+                return {
+                    nilad: false,
+                    fn: function (...args) { return this.evalOp(op.value, args); },
+                };
             }
-            assert(result, `Error during condensation process`);
-            
-            fns.push(result);
-        }
-        assert(fns.length === 1, `Cannot capture ${startingLength} ops`);
-        return new GlintFunction(fns[0])
+        });
+        
+        let glintFn = new GlintFunction(null)
             .setName(`[${ops.map(op => op.value).join(" ")}]`);
+        
+        assert(fns.length !== 0, "TODO: handle empty lambda");
+        
+        if(fns.length === 1) {
+            glintFn.setFn(fns[0].fn);
+        }
+        else if(fns.length === 2) {
+            let [ f, g ] = fns;
+            Glint.console.log({f, g});
+            if(f.nilad && g.nilad) {
+                assert(false, "Cannot condense consecutive nilads");
+            }
+            else if(f.nilad && !g.nilad) {
+                // e.g. {2/}
+                glintFn.setFn(async function (...args) {
+                    return g.fn.call(this, await f.fn.call(this), ...args);
+                });
+            }
+            else if(!f.nilad && g.nilad) {
+                // e.g. {-1}
+                glintFn.setFn(async function (...args) {
+                    return g.fn.call(this, ...args, await f.fn.call(this));
+                });
+            }
+            else {
+                assert(false, "No behavior implemented yet for consecutive functions");
+            }
+        }
+        else {
+            fns = fns.map(op => op.fn);
+            while(fns.length > 1) {
+                let tail = fns.splice(-3);
+                let result;
+                if(tail.length === 1) {
+                    result = tail[0];
+                }
+                else if(tail.length === 2) {
+                    let [ f, g ] = tail;
+                    result = async function (...args) {
+                        let head = args.length === 1 ? args : args.slice(0, -1);
+                        Glint.console.log("head", head, "of", args);
+                        return f.call(this,
+                            ...head,
+                            await g.call(this, args.at(-1))
+                        );
+                    };
+                }
+                else if(tail.length === 3) {
+                    let [ f, g, h ] = tail;
+                    result = async function (...args) {
+                        return g.call(this,
+                            await f.apply(this, args),
+                            await h.apply(this, args)
+                        );
+                    };
+                }
+                assert(result, `Error during condensation process`);
+                fns.push(result);
+            }
+            
+            assert(fns.length === 1, "Error while condensing: Some functions not condensed, or no functions were left");
+            glintFn.setFn(fns[0]);
+        }
+        
+        assert(glintFn.fn !== null, "Have not handled this yet");
+        
+        return glintFn;
+    }
+    
+    makeExplicitLambda(params, body) {
+        return new GlintFunction(function (...args) {
+            // TODO: better scoping
+            // this.addLocalScope(Object.fromEntries(params.map((param, idx) => [ param, args[idx] ])));
+            
+            // for now, variables get set in GLOBAL SCOPE >:|
+            params.forEach((param, idx) => {
+                this.variables[param] = args[idx];
+            });
+            
+            return this.evalTree(body);
+            // this.removeLocalScope();
+        })
+            .setArity(params.length)
+            .setName("{λ}");
     }
     
     async evalTree(tree) {
         if(tree === undefined) {
             return;
+        }
+        if(Array.isArray(tree)) {
+            let value;
+            for(let child of tree) {
+                value = await this.evalTree(child);
+            }
+            return value;
         }
         let instruction = tree.value;
         let children = tree.children;
@@ -1341,6 +1532,17 @@ class GlintInterpreter {
             // array
             Glint.console.log("CHILDREN OF THE CLOSE BRACKET?", children);
             return mapInSeries(children, child => this.evalTree(child));
+        }
+        if(instruction.type === GlintTokenizer.Types.LAMBDA) {
+            if(instruction.explicit) {
+                let [ args, body ] = instruction.groups;
+                let treeBody = this.makeTree(body);
+                Glint.console.log(treeBody);
+                return this.makeExplicitLambda(args, treeBody);
+            }
+            else {
+                return this.condenseCapturedOps(instruction.groups);
+            }
         }
         if(instruction.type === GlintTokenizer.Types.WORD) {
             assert(Object.hasOwn(this.variables, instruction.value), "Undefined variable " + instruction.value);
@@ -1360,7 +1562,7 @@ class GlintInterpreter {
             }
         }
         if(instruction.type === GlintTokenizer.Types.OP_CAPTURE) {
-            let fn = this.condenseCapturedOps(instruction.groups);
+            let fn = await this.condenseCapturedOps(instruction.groups);
             if(children) {
                 // TODO: do we need to await this?
                 // children = await mapInSeries(children, child => this.evalTree(child));
@@ -1371,7 +1573,7 @@ class GlintInterpreter {
                 return fn;
             }
         }
-        assert(false, `Could not handle operator type ${instruction.type.toString()} ${Glint.display(instruction)}`);
+        assert(false, `Could not handle operator type ${instruction?.type?.toString()} ${Glint.display(instruction)}`);
     }
     
     // may return a promise

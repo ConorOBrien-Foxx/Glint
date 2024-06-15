@@ -43,7 +43,7 @@ window.addEventListener("load", function () {
         };
         interpreter.variables.print = new GlintFunction((...args) => {
             let repr = args.map(e => e.toString());
-            output.value += repr.join(" ");
+            output.value += repr.join(" ") + "\n";
             console.log(...repr);
         })
             .setName("print")
@@ -57,10 +57,12 @@ window.addEventListener("load", function () {
             result = e;
         }
         finally {
-            if(output.value) {
-                output.value += "\n---------------------\n";
+            if(result !== undefined) {
+                if(output.value) {
+                    output.value += "\n---------------------\n";
+                }
+                output.value += Glint.display(result);
             }
-            output.value += Glint.display(result);
             fitTextToArea(output);
         }
     };

@@ -665,33 +665,24 @@ describe("operators", () => {
     
     describe(":=", () => {
         it("assigns value to variable", async () => {
-            let result = await interpreter.evalOp(":=", [
-                interpreter.makeTree("x"),
-                interpreter.makeTree("10"),
-            ]);
+            let result = await interpreter.eval("x := 10");
             assert.equal(interpreter.variables["x"], 10);
             assert.equal(result, 10);
         });
         it("defines and assigns function to variable", async () => {
-            let result = await interpreter.evalOp(":=", [
-                interpreter.makeTree("square(x)"),
-                interpreter.makeTree("x * x"),
-            ]);
+            let result = await interpreter.eval("square(x) := x * x");
             assert(Glint.isFunction(interpreter.variables["square"]));
             assert.equal(interpreter.variables["square"].name, "square");
             assert.equal(interpreter.variables["square"].arity, 1);
             // function returns expected values
-            assert.equal(await interpreter.variables["square"].call(null, 3), 9);
+            assert.equal(await interpreter.variables["square"].call(interpreter, 3), 9);
             assert.equal(result, interpreter.variables["square"]);
         });
         // /*
         // change this when we make more sane behavior, maybe
         it("throws error for nested assignment expression", async () => {
             assert.rejects(async () => {
-                await interpreter.evalOp(":=", [
-                    interpreter.makeTree("x + y"),
-                    interpreter.makeTree("10"),
-                ]);
+                await interpreter.eval("x + y := 10");
             });
         });
         // */
