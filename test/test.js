@@ -23,7 +23,7 @@ describe("shunting", () => {
     };
     
     const assertByKey = (keys, tokens, expectedValues) => {
-        assert.equal(tokens.length, expectedValues.length);
+        assert.equal(tokens.length, expectedValues.length, "Expected same number of tokens on each side");
         
         tokens.forEach((token, idx) => {
             let expected = expectedValues[idx];
@@ -39,7 +39,7 @@ describe("shunting", () => {
                     assertByKey(keys, left, right);
                 }
                 else {
-                    assert.equal(token[key], expected[key]);
+                    assert.equal(token[key], expected[key], `Keys ${key} do no match`);
                 }
             }
         });
@@ -104,6 +104,99 @@ describe("shunting", () => {
                 { value: "3", type: GlintTokenizer.Types.NUMBER },
                 { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
                 { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+            ]);
+        });
+        
+        it("works with multiple arguments", () => {
+            const tokens = Glint.tokenize("f 3;g 4;5");
+            shunter = new GlintShunting(tokens);
+            
+            assertTokensEqual(shunter.tokens, [
+                { value: "f", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: ";", type: GlintTokenizer.Types.SEPARATOR },
+                { value: "g", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "4", type: GlintTokenizer.Types.NUMBER },
+                { value: ";", type: GlintTokenizer.Types.SEPARATOR },
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+            ]);
+        });
+        
+        it("works with nested expressions", () => {
+            const tokens = Glint.tokenize("f 3;(4+5);6");
+            shunter = new GlintShunting(tokens);
+            
+            assertTokensEqual(shunter.tokens, [
+                { value: "f", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: ";", type: GlintTokenizer.Types.SEPARATOR },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "4", type: GlintTokenizer.Types.NUMBER },
+                { value: "+", type: GlintTokenizer.Types.OPERATOR },
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+                { value: ";", type: GlintTokenizer.Types.SEPARATOR },
+                { value: "6", type: GlintTokenizer.Types.NUMBER },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+            ]);
+        });
+        
+        it("works within arrays", () => {
+            const tokens = Glint.tokenize("[f[3;4];5]");
+            shunter = new GlintShunting(tokens);
+            
+            assertTokensEqual(shunter.tokens, [
+                { value: "[", type: GlintTokenizer.Types.OPEN_BRACKET },
+                { value: "f", type: GlintTokenizer.Types.WORD },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "[", type: GlintTokenizer.Types.OPEN_BRACKET },
+                { value: "3", type: GlintTokenizer.Types.NUMBER },
+                { value: ";", type: GlintTokenizer.Types.SEPARATOR },
+                { value: "4", type: GlintTokenizer.Types.NUMBER },
+                { value: "]", type: GlintTokenizer.Types.CLOSE_BRACKET },
+                { value: ";", type: GlintTokenizer.Types.SEPARATOR },
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+                { value: "]", type: GlintTokenizer.Types.CLOSE_BRACKET },
+            ]);
+        });
+        
+        it("works within lambdas", () => {
+            const tokens = Glint.tokenize("{a:f a}");
+            shunter = new GlintShunting(tokens);
+            
+            assertTokensEqual(shunter.tokens, [
+                { value: "{}", type: GlintTokenizer.Types.LAMBDA },
+                { value: "{", type: GlintTokenizer.Types.OPEN_BRACE },
+                // the following are not contained within the main tokenized group
+                // { value: "a", type: GlintTokenizer.Types.WORD },
+                // { value: ":", type: GlintTokenizer.Types.OPERATOR },
+                { value: "f", type: GlintTokenizer.Types.WORD },
+                { value: " ", type: GlintTokenizer.Types.WHITESPACE },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
+                { value: "}", type: GlintTokenizer.Types.CLOSE_BRACE },
+            ]);
+        });
+        
+        it("leaves valid expressions alone", () => {
+            const tokens = Glint.tokenize("f(a)");
+            shunter = new GlintShunting(tokens);
+            
+            assertTokensEqual(shunter.tokens, [
+                { value: "f", type: GlintTokenizer.Types.WORD },
+                { value: "(", type: GlintTokenizer.Types.OPEN_PAREN },
+                { value: "a", type: GlintTokenizer.Types.WORD },
                 { value: ")", type: GlintTokenizer.Types.CLOSE_PAREN },
             ]);
         });
@@ -604,6 +697,18 @@ describe("operators", () => {
             let result = await interpreter.evalOp("@", [[1, 2, 3], 1]);
             assert.equal(result, 2);
         });
+        it("accesses slices of array", async () => {
+            let result = await interpreter.evalOp("@", [[1, 2, 3, 4, 5], [2, 4]]);
+            assert.deepEqual(result, [3, 4]);
+        });
+        it("accesses negative-relative slices of array", async () => {
+            let result = await interpreter.evalOp("@", [[1, 2, 3, 4, 5], [0, -2]]);
+            assert.deepEqual(result, [1, 2, 3]);
+        });
+        it("accesses slices of string", async () => {
+            let result = await interpreter.evalOp("@", ["hello, world!", [5, 9]]);
+            assert.equal(result, ", wo");
+        });
         it("accesses nested index of array", async () => {
             let result = await interpreter.evalOp("@", [[[1, 2], [3, 4]], 1, 0]);
             assert.equal(result, 3);
@@ -611,6 +716,10 @@ describe("operators", () => {
         it("accesses index of string", async () => {
             let result = await interpreter.evalOp("@", ["hello", 1]);
             assert.equal(result, "e");
+        });
+        it("accesses index of object", async () => {
+            let result = await interpreter.evalOp("@", [{ a: 3, b: 5 }, "b"]);
+            assert.equal(result, 5);
         });
     });
     

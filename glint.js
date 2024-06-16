@@ -58,12 +58,22 @@ const getGlintReplacer = () => {
 
 const Glint = {};
 // TODO: remove error message when we have multi-index thingies
-Glint.accessIndex = (base, indices) =>
-    indices.length === 1
-        ? base.at
-            ? base.at(indices[0])
-            : base[indices[0]]
-        : Glint.accessIndex(Glint.accessIndex(base, [ indices[0] ]), indices.slice(1));
+Glint.accessIndex = (base, indices) => {
+    if(indices.length === 1) {
+        let [ index ] = indices;
+        if(Array.isArray(index)) {
+            assert(base.slice, `Cannot slice into ${Glint.getDebugTypes([ base ])}`);
+            return base.slice(...index);
+        }
+        if(base.at) {
+            return base.at(index);
+        }
+        return base[index];
+    }
+    else {
+        return Glint.accessIndex(Glint.accessIndex(base, [ indices[0] ]), indices.slice(1));
+    }
+};
 
 Glint.console = {
     silent: true,
@@ -357,6 +367,10 @@ Glint.range = (min, max, step) => {
 Glint.sort = sortable => 
     [...sortable].sort(Glint.deepCompare);
 
+// TODO: comprehensible error checking for unbalanced parens, including:
+// `}`, `{`, `(]`, `[(])`
+
+// TODO: allow ! in words like ruby
 const WORD_REGEX = /\w+/;
 class GlintTokenizer {
     constructor(string) {
@@ -545,7 +559,7 @@ class GlintShunting {
         "%of":  { precedence: 30,   associativity: "left" },
         "%":    { precedence: 30,   associativity: "left" },
         "^":    { precedence: 40,   associativity: "right" },
-        "@":    { precedence: 90,   associativity: "left" },
+        "@":    { precedence: 90,   associativity: "right" },
     };
     
     static isData(token) {
@@ -557,7 +571,9 @@ class GlintShunting {
     
     static isDataStart(token) {
         return GlintShunting.isData(token)
-            || token.type === GlintTokenizer.Types.OPEN_BRACKET;
+            || token.type === GlintTokenizer.Types.OPEN_BRACKET
+            // || token.type === GlintTokenizer.Types.OPEN_PAREN // XXX: we do NOT want to wrap every function call with extra parentheses, as this induces wrong behavior
+            || token.type === GlintTokenizer.Types.OPEN_BRACE;
     }
     
     static shouldSkip(token) {
@@ -578,13 +594,53 @@ class GlintShunting {
         this.nextParenIsFunctionCall = false;
         // detect consecutive data entries (illegal)
         this.lastWasData = false;
+        // used for verifying balanced parens
+        // (does not verify in the case of e.g. `({)}` currently.)
+        this.depths = {
+            paren: 0,
+            brace: 0,
+            bracket: 0,
+        };
         this.autoInsertParentheses();
+    }
+    
+    updateDepths(token, check = true) {
+        if(token.type === GlintTokenizer.Types.OPEN_BRACE) {
+            this.depths.brace++;
+        }
+        else if(token.type === GlintTokenizer.Types.OPEN_BRACKET) {
+            this.depths.bracket++;
+        }
+        else if(token.type === GlintTokenizer.Types.OPEN_PAREN) {
+            this.depths.paren++;
+        }
+        else if(token.type === GlintTokenizer.Types.CLOSE_BRACE) {
+            this.depths.brace--;
+        }
+        else if(token.type === GlintTokenizer.Types.CLOSE_BRACKET) {
+            this.depths.bracket--;
+        }
+        else if(token.type === GlintTokenizer.Types.CLOSE_PAREN) {
+            this.depths.paren--;
+        }
+        
+        if(check) {
+            assert(this.depths.paren >= 0, "Extra closing parenthesis )");
+            assert(this.depths.brace >= 0, "Extra closing brace }");
+            assert(this.depths.bracket >= 0, "Extra closing bracket ]");
+        }
     }
     
     // transforms expressions like `3 + f 4 * 5` to `3 + f(4 * 5)`
     autoInsertParentheses() {
         for(let i = 0; i < this.tokens.length; i++) {
             let token = this.tokens[i];
+            
+            let startDepth = {...this.depths};
+            this.updateDepths(token);
+            let continueDepths = {...this.depths};
+            
+            // console.log("token:", token.value);
             
             if(token.type === GlintTokenizer.Types.WORD) {
                 let j = i + 1;
@@ -597,6 +653,9 @@ class GlintShunting {
                 if(!nextToken || !this.isDataStart(nextToken)) {
                     continue;
                 }
+                
+                // console.log("Starting auto insert", token.value, nextToken.value, startDepth, continueDepths);
+                
                 // insert open parenthesis before j
                 this.tokens.splice(j, 0, {
                     type: GlintTokenizer.Types.OPEN_PAREN,
@@ -604,10 +663,28 @@ class GlintShunting {
                     groups: [],
                 });
                 // find relative end of expression
-                let k = j;
-                while(k < this.tokens.length && this.tokens[k].type !== GlintTokenizer.Types.CLOSE_PAREN) {
+                let k = j + 1;
+                while(k < this.tokens.length) {
+                    let token = this.tokens[k];
+                    // console.log("inner token:", token.value, this.depths, startDepth);
+                    // check before updating depths; this is where we want to set our inserted parenthesis
+                    if([
+                        GlintTokenizer.Types.CLOSE_PAREN,
+                        GlintTokenizer.Types.CLOSE_BRACE,
+                        GlintTokenizer.Types.CLOSE_BRACKET,
+                    ].includes(token.type)) {
+                        // console.log("start test", this.tokens.slice(0, k).map(e=>e.value).join``, this.depths, startDepth);
+                        if(this.depths.paren === startDepth.paren
+                        && this.depths.brace === startDepth.brace
+                        && this.depths.bracket === startDepth.bracket) {
+                            break;
+                        }
+                    }
+                    this.updateDepths(token);
                     k++;
                 }
+                // restore original depths, since we continue iterating with the next token
+                this.depths = continueDepths;
                 // insert corresponding close parenthesis
                 this.tokens.splice(k, 0, {
                     type: GlintTokenizer.Types.CLOSE_PAREN,
@@ -616,6 +693,11 @@ class GlintShunting {
                 });
             }
         }
+        
+        assert(this.depths.paren === 0, "Insufficient closing parenthesis )");
+        assert(this.depths.brace === 0, "Insufficient closing brace }");
+        assert(this.depths.bracket === 0, "Insufficient closing bracket ]");
+
         Glint.console.log("Parenthesized:", this.tokens.filter(e=>e.type!==GlintTokenizer.Types.WHITESPACE).map(e => e.value).join` `);
     }
     
@@ -728,6 +810,7 @@ class GlintShunting {
         else if(token.type === GlintTokenizer.Types.LINEBREAK) {
             Glint.console.log("separator encountered");
             // TODO: check to see we are only breaking when syntactically valid
+            // TODO: multi-line lambdas
             this.flushTo();
             this.nextState({
                 opArity: 1,
@@ -1035,6 +1118,8 @@ class GlintInterpreter {
             e: Math.E,
             TEST: [1, 2, 3, 4],
             // functions
+            fromjson: new GlintFunction(JSON.parse).setName("fromjson").setArity(1),
+            tojson: new GlintFunction(JSON.stringify).setName("tojson").setArity(1),
             eye: new GlintFunction(n => {
                 let res = Array(n);
                 for(let i = 0; i < n; i++) {
