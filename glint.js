@@ -560,6 +560,10 @@ class GlintShunting {
             || token.type === GlintTokenizer.Types.OPEN_BRACKET;
     }
     
+    static shouldSkip(token) {
+        return token.type === GlintTokenizer.Types.WHITESPACE;
+    }
+    
     constructor(tokens) {
         this.tokens = tokens;
         this.outputQueue = [];
@@ -623,6 +627,10 @@ class GlintShunting {
         return GlintShunting.isDataStart(token);
     }
     
+    shouldSkip(token) {
+        return GlintShunting.shouldSkip(token);
+    }
+    
     getPrecedenceInfo(value) {
         return GlintShunting.Precedence[value[0] === "`" ? "`" : value];
     }
@@ -649,10 +657,6 @@ class GlintShunting {
         }
     }
     
-    shouldSkip(token) {
-        return token.type === GlintTokenizer.Types.WHITESPACE;
-    }
-    
     flushTo(...types) {
         while(
             this.operatorStack.length > 0
@@ -676,46 +680,77 @@ class GlintShunting {
         assert(this.adverbStack.length === 0, `Unexpected adverb`);
     }
     
+    nextState({ opArity, parenIsFunctionCall, lastWasData }) {
+        assert(opArity !== undefined, "Expected opArity");
+        assert(parenIsFunctionCall !== undefined, "Expected parenIsFunctionCall");
+        assert(lastWasData !== undefined, "Expected lastWasData");
+        this.nextOpArity = opArity;
+        this.nextLastWasData = lastWasData;
+        this.nextParenIsFunctionCall = parenIsFunctionCall;
+    }
+    
     parseToken(token) {
         Glint.console.log("!!!! parsing", token.type, token.value);
         Glint.console.log("Op stack:", this.operatorStack.map(e => e.value));
         Glint.console.log("Arity stack:", this.arityStack);
         
-        let nextLastWasData = false;
+        // this.debug();
+        
+        this.nextLastWasData = false;
         let skipped = false;
         
         if(this.isData(token)) {
-            assert(!this.lastWasData, "Illegal to have two consecutive pieces of data");
+            if(this.lastWasData) {
+                let message = "Illegal to have two consecutive pieces of data";
+                if(token.value === ",") {
+                    message += "\nSuggestion: Did you mean `;` instead of `,`?";
+                }
+                assert(false, message);
+            }
             this.assertNoAdverbs(token);
             this.outputQueue.push(token);
-            // operators following data are binary
-            // e.g. 3 + 5
-            this.nextOpArity = 2;
+            this.nextState({
+                // operators following data are binary
+                // e.g. 3 + 5
+                opArity: 2,
+                parenIsFunctionCall: true,
+                lastWasData: true,
+            });
             // we have data: make sure the arity is at least 1
+            // this differentiates between e.g. f("lol") and f()
             this.flagDataForTopArity();
-            this.nextParenIsFunctionCall = true;
-            nextLastWasData = true;
         }
         else if(token.type === GlintTokenizer.Types.ADVERB) {
             this.adverbStack.push(token);
+            // don't rock the boat: we don't modify the tracking state
+            // TODO: error if next is not verb
         }
         else if(token.type === GlintTokenizer.Types.LINEBREAK) {
             Glint.console.log("separator encountered");
             // TODO: check to see we are only breaking when syntactically valid
             this.flushTo();
-            nextLastWasData = false;
-            this.nextParenIsFunctionCall = false;
+            this.nextState({
+                opArity: 1,
+                parenIsFunctionCall: false,
+                lastWasData: false,
+            });
         }
         else if(token.type === GlintTokenizer.Types.SEPARATOR) {
             // separates function arguments
             this.flushTo(
                 GlintTokenizer.Types.OPEN_PAREN,
                 GlintTokenizer.Types.OPEN_BRACKET,
+                // TODO: check if brace is needed?
             );
-            this.nextOpArity = 1;
+            
             assert(this.arityStack.length > 0, "Unexpected separator outside function call");
             this.arityStack[this.arityStack.length - 1]++;
-            this.nextParenIsFunctionCall = false;
+            
+            this.nextState({
+                opArity: 1,
+                parenIsFunctionCall: false,
+                lastWasData: false,
+            });
         }
         else if(token.type === GlintTokenizer.Types.OPERATOR) {
             let tokenWithArity = {
@@ -730,8 +765,11 @@ class GlintShunting {
             }
             this.operatorStack.push(tokenWithArity);
             // operators following any operator must be unary
-            this.nextOpArity = 1;
-            this.nextParenIsFunctionCall = false;
+            this.nextState({
+                opArity: 1,
+                parenIsFunctionCall: false,
+                lastWasData: false,
+            });
         }
         else if(token.type === GlintTokenizer.Types.OPEN_PAREN) {
             if(this.nextParenIsFunctionCall) {
@@ -772,8 +810,11 @@ class GlintShunting {
             }
             // operators immediately following an open parenthesis are necessarily unary
             // e.g. (+3 * 5)
-            this.nextOpArity = 1;
-            this.nextParenIsFunctionCall = false;
+            this.nextState({
+                opArity: 1,
+                parenIsFunctionCall: false,
+                lastWasData: false,
+            });
         }
         else if(token.type === GlintTokenizer.Types.CLOSE_PAREN) {
             this.flushTo(GlintTokenizer.Types.OPEN_PAREN);
@@ -785,20 +826,27 @@ class GlintShunting {
                 functionToken.arity += this.arityStack.pop();
                 this.outputQueue.push(functionToken);
             }
-            // operators immediately following a close parenthesis must be binary
-            // e.g. (3 * 5) - 6
-            this.nextOpArity = 2;
-            // if we have a parenthetical after a parenthetical, interpret as call
-            this.nextParenIsFunctionCall = true;
+            this.nextState({
+                // operators immediately following a close parenthesis must be binary
+                // e.g. (3 * 5) - 6
+                opArity: 2,
+                // if we have a parenthetical after a parenthetical, interpret as call
+                parenIsFunctionCall: true,
+                lastWasData: true,
+            });
+            // this counts as data
             this.flagDataForTopArity();
         }
         else if(token.type === GlintTokenizer.Types.OPEN_BRACKET) {
             this.arityStack.push(0);
             this.operatorStack.push(token);
-            // operators immediately following an open bracket are necessarily unary
-            // e.g. [+3 * 5]
-            this.nextOpArity = 1;
-            this.nextParenIsFunctionCall = false;
+            this.nextState({
+                // operators immediately following an open bracket are necessarily unary
+                // e.g. [+3 * 5]
+                opArity: 1,
+                parenIsFunctionCall: false,
+                lastWasData: false,
+            });
         }
         else if(token.type === GlintTokenizer.Types.CLOSE_BRACKET) {
             let startFlushIndex = this.operatorStack.length;
@@ -826,30 +874,43 @@ class GlintShunting {
                     arity,
                 });
             }
+            this.nextState({
+                opArity: 2,
+                // []() is an indexing/call expression
+                parenIsFunctionCall: true,
+                lastWasData: true,
+            });
             this.flagDataForTopArity();
-            this.nextOpArity = 2;
-            // []() is an indexing/call expression
-            this.nextParenIsFunctionCall = true;
         }
         else if(token.type === GlintTokenizer.Types.OPEN_BRACE) {
             // explicit lambda body
-            this.arityStack.push(0);
             this.operatorStack.push({
                 ...token,
                 outputQueueStartIndex: this.outputQueue.length,
             });
-            this.nextOpArity = 1;
-            this.nextParenIsFunctionCall = false;
+            this.nextState({
+                opArity: 1,
+                parenIsFunctionCall: false,
+                lastWasData: false,
+            });
         }
         else if(token.type === GlintTokenizer.Types.CLOSE_BRACE) {
             this.flushTo(GlintTokenizer.Types.OPEN_BRACE);
             let brace = this.operatorStack.pop();
             let body = this.outputQueue.splice(brace.outputQueueStartIndex);
             let lambda = this.outputQueue.pop();
+            console.log("!! args", lambda.groups);
+            console.log("!! body", body);
             this.outputQueue.push({
                 ...lambda,
                 groups: [ lambda.groups, body ],
             });
+            this.nextState({
+                opArity: 2,
+                parenIsFunctionCall: true,
+                lastWasData: true,
+            });
+            this.flagDataForTopArity();
         }
         else if(this.shouldSkip(token)) {
             // do nothing
@@ -860,7 +921,7 @@ class GlintShunting {
         }
         
         if(!skipped) {
-            this.lastWasData = nextLastWasData;
+            this.lastWasData = this.nextLastWasData;
         }
     }
     
@@ -893,16 +954,36 @@ class GlintShunting {
         
         this.assertNoAdverbs();
         this.assertFullOperands();
+        assert(this.arityStack.length === 0, "Unpopped arity");
 
         Glint.console.log("Shunting yard:", this.debugOutputQueue());
         
+        // this.debug();
+        
         return this.outputQueue;
+    }
+    
+    debugOperatorStack() {
+        return this.operatorStack
+            .map((e, i) => {
+                let arity = this.arityStack[i] ?? e.arity;
+                if(arity !== undefined) {
+                    return `${e.value}@${arity}`;
+                }
+                return e.value;
+            })
+            .join(" ");
     }
     
     debugOutputQueue() {
         return this.outputQueue
             .map(e => e.arity !== undefined ? e.value + "@" + e.arity : e.value)
             .join(" ");
+    }
+    
+    debug() {
+        console.log("Operator stack:", this.debugOperatorStack());
+        console.log("Output queue:  ", this.debugOutputQueue());
     }
 }
 
@@ -924,6 +1005,9 @@ const SYMBOL_MAP = {
     "ib": "‽",
     "interro": "‽",
     "interrobang": "‽",
+    "geq": "≥",
+    "leq": "≤",
+    "approx": "≈",
 };
 const symbolFromName = name => {
     return SYMBOL_MAP[name];
@@ -949,6 +1033,7 @@ class GlintInterpreter {
             sym: symbolFromName,
             pi: Math.PI,
             e: Math.E,
+            TEST: [1, 2, 3, 4],
             // functions
             eye: new GlintFunction(n => {
                 let res = Array(n);
@@ -963,6 +1048,7 @@ class GlintInterpreter {
                 .setName("eye")
                 .setArity(1),
             map: new GlintFunction(function (...args) {
+                console.log("!! MAP !!", args);
                 if(args.length === 1) {
                     let fn = args[0];
                     return new GlintFunction(function (arr) {
@@ -974,6 +1060,7 @@ class GlintInterpreter {
                 }
                 assert(args.length === 2, "Incorrect given to map (expected 1 or 2)");
                 let [ arr, fn ] = args;
+                console.log("arr:", arr);
                 return mapInSeries.call(this, arr, fn);
             })
                 .setName("map")
@@ -1170,7 +1257,7 @@ class GlintInterpreter {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
             if(Glint.isList(x) && Glint.isFunction(y)) {
-                return x.reduce((p, c) => y.call(null, p, c));
+                return x.reduce(async (p, c) => await y.call(this, await p, await c));
             }
             if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
                 return BigInt(x) / BigInt(y);
@@ -1345,8 +1432,8 @@ class GlintInterpreter {
         }
     }
     
-    async evalTreeOp(instruction, args) {
-        let { value, arity, adverbs } = instruction;
+    async evalTreeOp(instruction, args, evaluate = true) {
+        let { value, /*arity,*/ adverbs } = instruction;
         adverbs ??= [];
         
         let hold = args.map(() => false);
@@ -1357,17 +1444,19 @@ class GlintInterpreter {
             hold[1] = true;
         }
         
-        args = await mapInSeries(args,
-            (arg, idx) => hold[idx] ? arg : this.evalTree(arg)
-        );
+        if(evaluate) {
+            args = await mapInSeries(args,
+                (arg, idx) => hold[idx] ? arg : this.evalTree(arg)
+            );
+        }
         
         if(adverbs.length === 0) {
-            return this.evalOp(instruction.value, args);
+            return this.evalOp(value, args);
         }
         else {
             // TODO: more generic system
             assert(adverbs.length === 1 && adverbs[0].value === ".", "Cannot handle other adverbs than `.` yet");
-            return this.broadcast((...inner) => this.evalOp(instruction.value, inner), args);
+            return this.broadcast((...inner) => this.evalOp(value, inner), args);
         }
     }
     
@@ -1399,7 +1488,8 @@ class GlintInterpreter {
     }
     
     parseNumber(token) {
-        Glint.console.log(token);
+        Glint.console.log("parseNumber token", token);
+        assert(token.value !== ",", "Invalid number literal: `,`. Did you mean `;`?");
         // let string = token.value;
         let [ number, suffix ] = token.groups;
         number = number.replace(/,/g, "").replace(/_/, "-");
@@ -1430,25 +1520,44 @@ class GlintInterpreter {
     
     async condenseCapturedOps(ops) {
         Glint.console.log(ops);
-        // TODO: handle explicit, e.g., things containing `:`
-        // TODO: handle adverbs
         Glint.console.log("CONDENSED", ops.map(op => op.value));
-        let fns = ops.map(op => {
-            if(GlintShunting.isData(op)) {
-                return {
+        let fns = [];
+        let adverbStack = [];
+        for(let token of ops) {
+            if(GlintShunting.isData(token)) {
+                fns.push({
                     nilad: true,
                     // TODO: figure out whether this actually supposed to bind to innermost this instance, or if it should instead be an arrow function
                     // this might be relevant to scope
-                    fn: function (...args) { return this.evalTree({ value: op }); },
-                };
+                    fn: function (...args) { return this.evalTree({ value: token }); },
+                });
+            }
+            else if(token.type === GlintTokenizer.Types.ADVERB) {
+                adverbStack.push(token);
+            }
+            else if(token.type === GlintTokenizer.Types.OPERATOR) {
+                let adverbs = adverbStack.splice(0);
+                fns.push({
+                    nilad: false,
+                    fn: function (...args) {
+                        return this.evalTreeOp(
+                            {
+                                ...token,
+                                adverbs
+                            },
+                            args,
+                            false
+                        );
+                    },
+                });
+            }
+            else if(GlintShunting.shouldSkip(token)) {
+                // do nothing
             }
             else {
-                return {
-                    nilad: false,
-                    fn: function (...args) { return this.evalOp(op.value, args); },
-                };
+                assert(false, `Unexpected token encountered during condensation: ${JSON.stringify(token)}`);
             }
-        });
+        }
         
         let glintFn = new GlintFunction(null)
             .setName(`{${ops.map(op => op.value).join(" ")}}`);
@@ -1541,6 +1650,7 @@ class GlintInterpreter {
     }
     
     async evalTree(tree) {
+        // console.log("evalTree", tree.value, tree.children);
         if(tree === undefined) {
             return;
         }

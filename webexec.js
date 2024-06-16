@@ -42,7 +42,7 @@ window.addEventListener("load", function () {
             return result;
         };
         interpreter.variables.print = new GlintFunction((...args) => {
-            let repr = args.map(e => e.toString());
+            let repr = args.map(e => Glint.display(e));
             output.value += repr.join(" ") + "\n";
             console.log(...repr);
         })
