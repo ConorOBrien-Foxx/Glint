@@ -97,7 +97,7 @@ Glint.console = {
         return this._silent;
     }
 };
-Glint.console.silent = false;
+Glint.console.silent = true;
 
 Glint.DataTypes = {
     INT:        0b00000001,
@@ -258,12 +258,14 @@ Glint._display = (value, ancestors = []) => {
 Glint.display = arg => Glint._display(arg);
 
 class GlintFunction {
+    static NO_SEED = Symbol("GlintFunction.NO_SEED");
     constructor(fn) {
         this.fn = fn;
         this.name = "anonymous";
         this.arity = null;
         this.maxArity = null;
         this.signature = null; // todo
+        this.seed = GlintFunction.NO_SEED; // used in reductions
     }
     
     setName(name) {
@@ -279,6 +281,11 @@ class GlintFunction {
     setArity(arity) {
         this.arity = arity;
         this.maxArity = Array.isArray(arity) ? Math.max(...arity) : arity;
+        return this;
+    }
+    
+    setSeed(seed) {
+        this.seed = seed;
         return this;
     }
     
@@ -805,7 +812,7 @@ class GlintShunting {
                 // before we do anything, we know this must be a property thing
                 let dotToken = this.adverbStack.pop();
                 dotToken.type = GlintTokenizer.Types.OPERATOR;
-                console.log("DOT TOKEN:", dotToken);
+                Glint.console.log("DOT TOKEN:", dotToken);
                 this.parseToken(dotToken);
             }
             this.assertNoAdverbs();
@@ -1139,91 +1146,16 @@ class GlintInterpreter {
         };
     }
     
+    // define functions later
+    static STANDARD_LIBRARY = {
+        sym: symbolFromName,
+        pi: Math.PI,
+        e: Math.E,
+    };
     loadStandardLibrary() {
         Object.assign(this.variables, {
             SYMBOL_MAP,
-            sym: symbolFromName,
-            pi: Math.PI,
-            e: Math.E,
-            TEST: [1, 2, 3, 4],
-            TESTB: { A: { B: new GlintFunction(b => b + 3).setName("TESTB.A").setArity(1) } },
-            // functions
-            fromjson: new GlintFunction(JSON.parse).setName("fromjson").setArity(1),
-            tojson: new GlintFunction(JSON.stringify).setName("tojson").setArity(1),
-            eye: new GlintFunction(n => {
-                let res = Array(n);
-                for(let i = 0; i < n; i++) {
-                    res[i] = Array(n);
-                    for(let j = 0; j < n; j++) {
-                        res[i][j] = i === j ? 1 : 0;
-                    }
-                }
-                return res;
-            })
-                .setName("eye")
-                .setArity(1),
-            map: new GlintFunction(function (...args) {
-                console.log("!! MAP !!", args);
-                if(args.length === 1) {
-                    let fn = args[0];
-                    return new GlintFunction(function (arr) {
-                        Glint.console.log(this);
-                        return this.variables.map.call(this, arr, fn);
-                    })
-                        .setName(`map:${fn.name}`)
-                        .setArity(1);
-                }
-                assert(args.length === 2, "Incorrect given to map (expected 1 or 2)");
-                let [ arr, fn ] = args;
-                console.log("arr:", arr);
-                return mapInSeries.call(this, arr, fn);
-            })
-                .setName("map")
-                .setArity([2, 1]),
-            deg: new GlintFunction(n => n * Math.PI / 180)
-                .setName("deg")
-                .setArity(1),
-            c: new GlintFunction((...args) => args)
-                .setName("c")
-                .setArity(Infinity),
-            sum: new GlintFunction(x => x.reduce((p, c) => p + c, 0))
-                .setName("sum")
-                .setArity(1),
-            size: new GlintFunction(x => x.length ?? x.size)
-                .setName("size")
-                .setArity(1),
-            range: new GlintFunction(Glint.range)
-                .setName("range")
-                .setArity([1, 2, 3]),
-            sort: new GlintFunction(Glint.sort)
-                .setName("sort")
-                .setArity(1),
-            big: new GlintFunction(n => BigInt(n))
-                .setName("big")
-                .setArity(1),
-            uniq: new GlintFunction(s => [...new Set(s)])
-                .setName("uniq")
-                .setArity(1),
-            eval: new GlintFunction(GlintInterpreter.prototype.eval)
-                .setName("eval")
-                .setArity(1),
-            // TODO: overload for arrays
-            split: new GlintFunction((s, by) => s.split(by))
-                .setName("split")
-                .setArity(2),
-            join: new GlintFunction((a, by) => a.join(by))
-                .setName("join")
-                .setArity(2),
-            lines: new GlintFunction(s => s.split("\n"))
-                .setName("lines")
-                .setArity(1),
-            unlines: new GlintFunction(s => s.join("\n"))
-                .setName("unlines")
-                .setArity(1),
-            // TODO: make work for web version
-            print: new GlintFunction((...args) => console.log(...args.map(e => e.toString())))
-                .setName("print")
-                .setArity(1),
+            ...GlintInterpreter.STANDARD_LIBRARY,
         });
         let mathWords = [
             "sin", "cos", "tan", "sinh", "cosh", "tanh",
@@ -1376,7 +1308,12 @@ class GlintInterpreter {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
             if(Glint.isList(x) && Glint.isFunction(y)) {
-                return x.reduce(async (p, c) => await y.call(this, await p, await c));
+                if(y.seed !== GlintFunction.NO_SEED) {
+                    return x.reduce(async (p, c) => await y.call(this, await p, await c), y.seed);
+                }
+                else {
+                    return x.reduce(async (p, c) => await y.call(this, await p, await c));
+                }
             }
             if(args.every(Glint.isIntLike) && args.some(Glint.isBigInt)) {
                 return BigInt(x) / BigInt(y);
@@ -1429,6 +1366,9 @@ class GlintInterpreter {
             }
             else if(args.every(Glint.isNumberLike)) {
                 return Number(x) ** Number(y);
+            }
+            else if(Glint.isFunction(x)) {
+                return x.copy().setSeed(y);
             }
             // else if(args.every(Glint.isString)) {
                 // return x + y;
@@ -1525,7 +1465,7 @@ class GlintInterpreter {
         if(value === ".") {
             let [ base, prop ] = args;
             prop = prop?.value?.value ?? prop;
-            console.log("dot access", {base, prop});
+            Glint.console.log("dot access", {base, prop});
             if(args.length === 1) {
                 return new GlintFunction(function (obj) {
                     return this.evalOp(".", [ obj, base ]);
@@ -1558,7 +1498,7 @@ class GlintInterpreter {
                 
                 assert(Glint.isFunction(this.variables[prop]), `Cannot implement Uniform Function Call Syntax on non-function variable ${prop} (${this.variables[prop]})`);
                 return new GlintFunction(function (...args) {
-                    console.log("UFCS!", base, args);
+                    Glint.console.log("UFCS!", base, args);
                     return this.variables[prop].call(this, base, ...args);
                 })
                     .setName(`UFCS ${base}.${prop}`);
@@ -1685,6 +1625,11 @@ class GlintInterpreter {
             .replace(/""/g, '"');
     }
     
+    static SEED_VALUES = {
+        "+": 0,
+        "-": 0,
+        "*": 1,
+    };
     async condenseCapturedOps(ops) {
         Glint.console.log(ops);
         Glint.console.log("CONDENSED", ops.map(op => op.value));
@@ -1704,7 +1649,7 @@ class GlintInterpreter {
             }
             else if(token.type === GlintTokenizer.Types.OPERATOR) {
                 let adverbs = adverbStack.splice(0);
-                fns.push({
+                let fnElement = {
                     nilad: false,
                     fn: function (...args) {
                         return this.evalTreeOp(
@@ -1716,7 +1661,11 @@ class GlintInterpreter {
                             false
                         );
                     },
-                });
+                }
+                if(token.value in GlintInterpreter.SEED_VALUES) {
+                    fnElement.seed = GlintInterpreter.SEED_VALUES[token.value];
+                }
+                fns.push(fnElement);
             }
             else if(GlintShunting.shouldSkip(token)) {
                 // do nothing
@@ -1733,6 +1682,9 @@ class GlintInterpreter {
         
         if(fns.length === 1) {
             glintFn.setFn(fns[0].fn);
+            if("seed" in fns[0]) {
+                glintFn.setSeed(fns[0].seed);
+            }
         }
         else if(fns.length === 2) {
             let [ f, g ] = fns;
@@ -1900,6 +1852,163 @@ class GlintInterpreter {
         return resultValue;
     }
 }
+
+GlintInterpreter.STANDARD_LIBRARY.parse_json =
+    new GlintFunction(JSON.parse)
+        .setName("parse_json")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.to_json =
+    new GlintFunction(JSON.stringify)
+        .setName("to_json")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.eye =
+    new GlintFunction(n => {
+        let res = Array(n);
+        for(let i = 0; i < n; i++) {
+            res[i] = Array(n);
+            for(let j = 0; j < n; j++) {
+                res[i][j] = i === j ? 1 : 0;
+            }
+        }
+        return res;
+    })
+        .setName("eye")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.map =
+    new GlintFunction(function (...args) {
+        console.log("!! MAP !!", args);
+        if(args.length === 1) {
+            let fn = args[0];
+            return new GlintFunction(function (arr) {
+                Glint.console.log(this);
+                return this.variables.map.call(this, arr, fn);
+            })
+                .setName(`map:${fn.name}`)
+                .setArity(1);
+        }
+        assert(args.length === 2, "Incorrect number of arguments given to map (expected 1 or 2)");
+        let [ arr, fn ] = args;
+        console.log("arr:", arr);
+        return mapInSeries.call(this, arr, fn);
+    })
+        .setName("map")
+        .setArity([2, 1]);
+
+GlintInterpreter.STANDARD_LIBRARY.deg =
+    new GlintFunction(n => n * Math.PI / 180)
+        .setName("deg")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.c =
+    new GlintFunction((...args) => args)
+        .setName("c")
+        .setArity(Infinity);
+
+GlintInterpreter.STANDARD_LIBRARY.sum =
+    new GlintFunction(x => x.reduce((p, c) => p + c, 0))
+        .setName("sum")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.size =
+    new GlintFunction(x => x.length ?? x.size)
+        .setName("size")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.range =
+    new GlintFunction(Glint.range)
+        .setName("range")
+        .setArity([1, 2, 3]);
+
+GlintInterpreter.STANDARD_LIBRARY.sort =
+    new GlintFunction(Glint.sort)
+        .setName("sort")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.big =
+    new GlintFunction(n => BigInt(n))
+        .setName("big")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.uniq =
+    new GlintFunction(s => [...new Set(s)])
+        .setName("uniq")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.eval =
+    new GlintFunction(GlintInterpreter.prototype.eval)
+        .setName("eval")
+        .setArity(1);
+
+// TODO: overload for arrays
+const split = (s, by) => {
+    // TODO: generalize for sequences
+    if(Array.isArray(s)) {
+        let collected = [ [] ];
+        s.forEach(el => {
+            if(Glint.deepCompare(el, by) == 0) {
+                collected.push([]);
+            }
+            else {
+                collected.at(-1).push(el);
+            }
+        });
+        return collected;
+    }
+    else {
+        return s.split(by);
+    }
+};
+GlintInterpreter.STANDARD_LIBRARY.split =
+    new GlintFunction(split)
+        .setName("split")
+        .setArity(2);
+
+GlintInterpreter.STANDARD_LIBRARY.join =
+    new GlintFunction((a, by) => a.join(by))
+        .setName("join")
+        .setArity(2);
+
+GlintInterpreter.STANDARD_LIBRARY.lines =
+    new GlintFunction(s => s.split("\n"))
+        .setName("lines")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.unlines =
+    new GlintFunction(s => s.join("\n"))
+        .setName("unlines")
+        .setArity(1);
+
+// TODO: make work for web version
+GlintInterpreter.STANDARD_LIBRARY.print =
+    new GlintFunction((...args) => console.log(...args.map(e => e.toString())))
+        .setName("print")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.with_index =
+    new GlintFunction((arr, n = 0) => arr.map((e, i) => [e, i + n]))
+        .setName("with_index")
+        .setArity([1, 2]);
+
+GlintInterpreter.STANDARD_LIBRARY.index =
+    new GlintFunction((arr, el) => {
+        let index = arr.indexOf(el);
+        return index === -1 ? null : index
+    })
+        .setName("index")
+        .setArity(2);
+
+GlintInterpreter.STANDARD_LIBRARY.prefixes =
+    new GlintFunction(arr => arr.map((_, i) => arr.slice(0, i + 1)))
+        .setName("prefixes")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.suffixes =
+    new GlintFunction(arr => arr.map((_, i) => arr.slice(i)))
+        .setName("prefixes")
+        .setArity(1);
 
 Glint.tokenize = string => {
     let tokenizer = new GlintTokenizer(string);
