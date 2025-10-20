@@ -75,27 +75,29 @@ Glint.accessIndex = (base, indices) => {
     }
 };
 
+const NO_OP = () => {};
 Glint.console = {
-    silent: true,
-    log(...args) {
-        if(this.silent) {
-            return;
+    _silent: true,
+    set silent(v) {
+        this._silent = v;
+        if(this._silent) {
+            this.log = NO_OP;
+            this.warn = NO_OP;
+            this.info = NO_OP;
+            this.error = NO_OP;
         }
-        console.log(...args);
-    },
-    warn(...args) {
-        if(this.silent) {
-            return;
+        else {
+            this.log = console.log.bind(console);
+            this.warn = console.warn.bind(console);
+            this.info = console.info.bind(console);
+            this.error = console.error.bind(console);
         }
-        console.warn(...args);
     },
-    error(...args) {
-        // if(this.silent) {
-            // return;
-        // }
-        console.error(...args);
-    },
+    get silent() {
+        return this._silent;
+    }
 };
+Glint.console.silent = false;
 
 Glint.DataTypes = {
     INT:        0b00000001,
@@ -330,7 +332,7 @@ Glint.deepCompare = (a, b) => {
         }
         
         for(let key of keysA) {
-            if(!b.hasOwnProperty(key)) {
+            if(!Object.hasOwn(b, key)) {
                 return -1;
             }
             const comparisonResult = Glint.deepCompare(a[key], b[key]);
@@ -371,7 +373,7 @@ Glint.sort = sortable =>
 // `}`, `{`, `(]`, `[(])`
 
 // TODO: allow ! in words like ruby
-const WORD_REGEX = /\w+/;
+const WORD_REGEX = /\w+!?/;
 class GlintTokenizer {
     constructor(string) {
         this.string = string;
@@ -405,13 +407,14 @@ class GlintTokenizer {
         OP_CAPTURE: Symbol("GlintTokenizer.Types.OP_CAPTURE"),
         STRING: Symbol("GlintTokenizer.Types.STRING"),
         LAMBDA: Symbol("GlintTokenizer.Types.LAMBDA"),
+        LINEBREAK: Symbol("GlintTokenizer.Types.LINEBREAK"),
     };
     // TODO: accept custom operators
     // final operator names have all whitespace removed
     static Regexes = [
         // TODO: better comma-in-number verification (e.g. ,,,3., shouldn't be a valid number)
         [ /(_?(?:[\d,]+(?:\.[\d,]+)?|\.[\d,]+))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
-        [ /%\s*of|<=>|\|>|[:<>!]=|[-+\/%*^=<>!@#|]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
+        [ /%\s*of|<=>|\|>|[:<>!]=|[-+\\/%*^=<>!@#|]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.&]/, GlintTokenizer.Types.ADVERB ],
         [ WORD_REGEX, GlintTokenizer.Types.WORD ],
         [ /[ \t]+/, GlintTokenizer.Types.WHITESPACE ],
@@ -559,7 +562,8 @@ class GlintShunting {
         "%of":  { precedence: 30,   associativity: "left" },
         "%":    { precedence: 30,   associativity: "left" },
         "^":    { precedence: 40,   associativity: "right" },
-        "@":    { precedence: 90,   associativity: "right" },
+        ".":    { precedence: 8000, associativity: "left" },
+        "@":    { precedence: 90,   associativity: "left" },
     };
     
     static isData(token) {
@@ -594,6 +598,9 @@ class GlintShunting {
         this.nextParenIsFunctionCall = false;
         // detect consecutive data entries (illegal)
         this.lastWasData = false;
+        // used both for static checking of valid adverbs, and contextually determine the meaning of "."
+        // either is null, or a string
+        this.lastAdverb = null;
         // used for verifying balanced parens
         // (does not verify in the case of e.g. `({)}` currently.)
         this.depths = {
@@ -772,6 +779,9 @@ class GlintShunting {
     }
     
     parseToken(token) {
+        assert(token, `Cannot call parseToken with non-truthy token '${token}'`);
+        assert(token.type, `Token must have associated type; got '${token.type?.toString()}' of ${JSON.stringify(token)}`);
+        
         Glint.console.log("!!!! parsing", token.type, token.value);
         Glint.console.log("Op stack:", this.operatorStack.map(e => e.value));
         Glint.console.log("Arity stack:", this.arityStack);
@@ -780,6 +790,8 @@ class GlintShunting {
         
         this.nextLastWasData = false;
         let skipped = false;
+        let nextLastAdverb = null;
+        let acceptsAdverb = false;
         
         if(this.isData(token)) {
             if(this.lastWasData) {
@@ -789,7 +801,14 @@ class GlintShunting {
                 }
                 assert(false, message);
             }
-            this.assertNoAdverbs(token);
+            if(this.lastAdverb === ".") {
+                // before we do anything, we know this must be a property thing
+                let dotToken = this.adverbStack.pop();
+                dotToken.type = GlintTokenizer.Types.OPERATOR;
+                console.log("DOT TOKEN:", dotToken);
+                this.parseToken(dotToken);
+            }
+            this.assertNoAdverbs();
             this.outputQueue.push(token);
             this.nextState({
                 // operators following data are binary
@@ -804,6 +823,8 @@ class GlintShunting {
         }
         else if(token.type === GlintTokenizer.Types.ADVERB) {
             this.adverbStack.push(token);
+            nextLastAdverb = token.value;
+            acceptsAdverb = true;
             // don't rock the boat: we don't modify the tracking state
             // TODO: error if next is not verb
         }
@@ -836,6 +857,7 @@ class GlintShunting {
             });
         }
         else if(token.type === GlintTokenizer.Types.OPERATOR) {
+            acceptsAdverb = true;
             let tokenWithArity = {
                 ...token,
                 arity: this.nextOpArity,
@@ -855,13 +877,14 @@ class GlintShunting {
             });
         }
         else if(token.type === GlintTokenizer.Types.OPEN_PAREN) {
+            // TODO: figure out why a.b(c) doesn't work
             if(this.nextParenIsFunctionCall) {
                 // handle function call case
                 // XXX: it's probably sinful to pop from the outputQueue but whatever.
                 // TODO: allow adverbs to apply to function callers
                 let functionHandle = this.outputQueue.pop();
+                Glint.console.log("Opcall function handle:", functionHandle);
                 /*
-                console.log("Opcall funciton handle:", functionHandle);
                 if(typeof functionHandle.arity === "undefined") {
                     let functionToken = {
                         ...functionHandle,
@@ -874,6 +897,10 @@ class GlintShunting {
                 }
                 */
                 this.outputQueue.push(functionHandle);
+                // handle a.b.c...(d)
+                while(this.operatorStack.at(-1)?.value == ".") {
+                    this.outputQueue.push(this.operatorStack.pop());
+                }
                 this.operatorStack.push({
                     type: GlintTokenizer.Types.OPERATOR,
                     value: "@",
@@ -1004,7 +1031,9 @@ class GlintShunting {
         }
         
         if(!skipped) {
+            assert(this.lastAdverb === null || acceptsAdverb, `Cannot have adverb before ${token.type.toString()}`);
             this.lastWasData = this.nextLastWasData;
+            this.lastAdverb = nextLastAdverb;
         }
     }
     
@@ -1117,6 +1146,7 @@ class GlintInterpreter {
             pi: Math.PI,
             e: Math.E,
             TEST: [1, 2, 3, 4],
+            TESTB: { A: { B: new GlintFunction(b => b + 3).setName("TESTB.A").setArity(1) } },
             // functions
             fromjson: new GlintFunction(JSON.parse).setName("fromjson").setArity(1),
             tojson: new GlintFunction(JSON.stringify).setName("tojson").setArity(1),
@@ -1178,7 +1208,7 @@ class GlintInterpreter {
                 .setName("eval")
                 .setArity(1),
             // TODO: overload for arrays
-            split: new GlintFunction((s, by) => s.split(y))
+            split: new GlintFunction((s, by) => s.split(by))
                 .setName("split")
                 .setArity(2),
             join: new GlintFunction((a, by) => a.join(by))
@@ -1236,6 +1266,10 @@ class GlintInterpreter {
                 this.variables[varDefinition.value.value] = value;
                 return value;
             }
+        }
+        
+        if(value === "\\") {
+            
         }
         
         if(value[0] === "`") {
@@ -1488,6 +1522,50 @@ class GlintInterpreter {
             */
         }
         
+        if(value === ".") {
+            let [ base, prop ] = args;
+            prop = prop?.value?.value ?? prop;
+            console.log("dot access", {base, prop});
+            if(args.length === 1) {
+                return new GlintFunction(function (obj) {
+                    return this.evalOp(".", [ obj, base ]);
+                })
+                    .setName(`propda .${base}`)
+                    .setArity(1);
+            }
+            else {
+                // designed to facilitate common patterns of objects
+                if(base.has) {
+                    // has-get-at-subscript pattern (Set)
+                    if(base.has(prop)) {
+                        return base.get ? base.get(prop) : base.at ? base.at(prop) : base[prop];
+                    }
+                }
+                else if(base.includes) {
+                    // includes-at-subscript pattern (Array, String)
+                    if(base.includes(prop)) {
+                        return base.at ? base.at(prop) : base[prop];
+                    }
+                }
+                else {
+                    // hasOwn-subscript syntax (Object)
+                    if(Object.hasOwn(base, prop)) {
+                        return base[prop];
+                    }
+                }
+                // if we fell through, handle Uniform Function Call Syntax syntax
+                assert(Object.hasOwn(this.variables, prop), `Undefined function via UFCS ${prop}`);
+                
+                assert(Glint.isFunction(this.variables[prop]), `Cannot implement Uniform Function Call Syntax on non-function variable ${prop} (${this.variables[prop]})`);
+                return new GlintFunction(function (...args) {
+                    console.log("UFCS!", base, args);
+                    return this.variables[prop].call(this, base, ...args);
+                })
+                    .setName(`UFCS ${base}.${prop}`);
+                
+            }
+        }
+        
         assert(false, `Could not handle instruction ${value}@${args.length}`);
     }
     
@@ -1526,6 +1604,10 @@ class GlintInterpreter {
         // TODO: custom hold
         if(value === ":=") {
             hold[0] = true;
+            hold[1] = true;
+        }
+        if(value === ".") {
+            hold[0] = false;
             hold[1] = true;
         }
         
@@ -1748,7 +1830,7 @@ class GlintInterpreter {
         }
         let instruction = tree.value;
         let children = tree.children;
-        Glint.console.log("Evaluating:", instruction, children);
+        Glint.console.log("Evaluating:", instruction, "with children", ...children ?? []);
         if(instruction.type === GlintTokenizer.Types.NUMBER) {
             return this.parseNumber(instruction);
         }

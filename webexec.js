@@ -31,7 +31,7 @@ window.addEventListener("load", function () {
                 return line;
             }
         };
-        interpreter.variables.ilines = () => {
+        interpreter.variables.ilines = interpreter.variables.readlines = () => {
             let result = input.slice(inputPointer).split("\n");
             inputPointer = input.length;
             return result;

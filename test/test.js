@@ -7,6 +7,122 @@ const {
     GlintShunting,
     GlintTokenizer,
 } = Glint;
+Glint.console.silent = true;
+    
+const anyChildHasKeyFrom = (object, keySet) => {
+    if(Array.isArray(object)) {
+        return object.some(child => anyChildHasKeyFrom(child, keySet));
+    }
+    return keySet.some(key => Object.hasOwn(object, key));
+};
+
+const subsetKeysFromObject = (keys, obj) =>
+    Object.fromEntries(
+        Object.entries(obj)
+            .filter(([key, value]) => keys.includes(key))
+            .map(([key, value]) => [key, anyChildHasKeyFrom(value, keys) ? subsetKeysFromObject(keys, value) : value])
+    );
+
+const assertByKey = (keys, testingValues, expectedValues) => {
+    assert.equal(testingValues.length, expectedValues.length, "Expected same number of entries on each side");
+    
+    let testingIsArray = Array.isArray(testingValues);
+    let expectedIsArray = Array.isArray(expectedValues);
+    
+    assert(!(testingIsArray && !expectedIsArray), "Testing array against non-array");
+    assert(!(!testingIsArray && expectedIsArray), "Testing non-array againt array");
+    
+    // now, keysIsArray and expectedIsArray are both true, or both false
+    
+    let testingImage = testingIsArray
+        ? testingValues.map(value => subsetKeysFromObject(keys, value))
+        : subsetKeysFromObject(keys, testingValues);
+    let expectedImage = expectedIsArray
+        ? expectedValues.map(value => subsetKeysFromObject(keys, value))
+        : subsetKeysFromObject(keys, expectedValues);
+    
+    // console.log(testingImage, expectedImage);
+    
+    assert.deepEqual(testingImage, expectedImage);
+    
+    // XXX: changed: it used to subset the deep keys, now it does not
+    /*
+    
+    tokens.forEach((token, idx) => {
+        let expected = expectedValues[idx];
+        
+        for(let key of keys) {
+            let left = token[key];
+            let right = expected[key];
+
+            if(left && right && [ left, right ].some(object =>
+                anyChildHasKeyFrom(object, keys)
+            )) {
+                // recursively compare
+                // console.log("RECURSING", keys, left, right);
+                assertByKey(keys, left, right);
+            }
+            else {
+                assert.equal(token[key], expected[key], `Keys \`${key}\` do not match (index@${idx})`);
+            }
+        }
+    });
+    */
+};
+
+const assertTokensEqual = (...args) =>
+    assertByKey(["type", "value"], ...args);
+
+const assertTokensEqualWithArity = (...args) =>
+    assertByKey(["type", "value", "arity"], ...args);
+
+const assertTokensEqualWithArityAndAdverbs = (...args) =>
+    assertByKey(["type", "value", "arity", "adverbs"], ...args);
+
+describe("testing", () => {
+    describe("assertByKey", () => {
+        it("should be vacuously true for empty key set", () => {
+            assertByKey([], { a: 3 }, { a: 5 });
+        });
+        it("should be vacuously true for objects with no matching key", () => {
+            assertByKey(["qwerty"], { a: 3 }, { a: 5 });
+        });
+        it("should be true for objects with the same matching key", () => {
+            assertByKey(["a"], { a: 3, b: 10, c: 93 }, { a: 3, b: 15 });
+            assertByKey(["a"], { a: 3, b: 15 }, { a: 3, b: 10, c: 93 });
+        });
+        it("should be false for objects differing by the matching key", () => {
+            assert.throws(() => assertByKey(["a"], { a: 3, b: 10, c: 93 }, { a: 13, b: 15 }));
+            assert.throws(() => assertByKey(["a"], { a: 13, b: 15 }, { a: 3, b: 10, c: 93 }));
+        });
+        it("should be false when only one object has the key", () => {
+            assert.throws(() => assertByKey(["a"], { a: 3 }, { b: 3 }));
+            assert.throws(() => assertByKey(["a"], { b: 3 }, { a: 3 }));
+        });
+        it("should be false when only one of the requested keys matches", () => {
+            assert.throws(() => assertByKey(["a", "b"], { a: 3, b: 9234 }, { a: 3, b: 3 }));
+        });
+        it("should be true when all the requested keys matches", () => {
+            assertByKey(["a", "b"], { a: 3, b: 3 }, { a: 3, b: 3 });
+        });
+        it("should work for deep keys", () => {
+            assertByKey(["a"], { a: { a: 15, b: 10 }, b: 910 }, { a: { a: 15, b: 10 }, b: 99 });
+        });
+        it("should propogate selected key to deep objects", () => {
+            assertByKey(["a"], { a: { a: 15, b: 10 }, b: 910 }, { a: { a: 15, b: -1000000 }, b: 99 });
+        });
+        it("should work for arrays of objects", () => {
+            assertByKey(["a"],
+                [ { a: 3 }, { a: 10, b: 1337 }, { noA: null } ],
+                [ { a: 3 }, { a: 10, b: -591 }, { noA: null } ]
+            );
+            assert.throws(() => assertByKey(["a"],
+                [ { a: 3 }, { a: 10, b: 1337 }, { noA: null } ],
+                [ { a: 3 }, { a: -1, b: -591 }, { noA: null } ]
+            ));
+        })
+    });
+});
 
 // TODO: test shunting (including what should fail/error)
 describe("shunting", () => {
@@ -14,45 +130,6 @@ describe("shunting", () => {
     beforeEach(() => {
         shunter = null;
     });
-    
-    const anyChildHasKeyFrom = (object, keySet) => {
-        if(Array.isArray(object)) {
-            return object.some(child => anyChildHasKeyFrom(child, keySet));
-        }
-        return keySet.some(key => Object.hasOwn(object, key));
-    };
-    
-    const assertByKey = (keys, tokens, expectedValues) => {
-        assert.equal(tokens.length, expectedValues.length, "Expected same number of tokens on each side");
-        
-        tokens.forEach((token, idx) => {
-            let expected = expectedValues[idx];
-            
-            for(let key of keys) {
-                let left = token[key];
-                let right = expected[key];
-
-                if(left && right && [ left, right ].some(object =>
-                    anyChildHasKeyFrom(object, keys)
-                )) {
-                    // recursively compare
-                    assertByKey(keys, left, right);
-                }
-                else {
-                    assert.equal(token[key], expected[key], `Keys ${key} do no match`);
-                }
-            }
-        });
-    };
-    
-    const assertTokensEqual = (...args) =>
-        assertByKey(["type", "value"], ...args);
-    
-    const assertTokensEqualWithArity = (...args) =>
-        assertByKey(["type", "value", "arity"], ...args);
-    
-    const assertTokensEqualWithArityAndAdverbs = (...args) =>
-        assertByKey(["type", "value", "arity", "adverbs"], ...args);
     
     describe("automatic parenthesis insertion", () => {
         it("runs in the constructor", () => {
@@ -375,6 +452,71 @@ describe("shunting", () => {
                 const output = shunter.shuntingYard();
             }, AssertionError);
         });
+        
+        it("supports `% of` with a space", () => {
+            const tokens = Glint.tokenize("5% of 50");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: "50", type: GlintTokenizer.Types.NUMBER },
+                { value: "%of", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("interprets `.` in `a.b` as an operator", () => {
+            const tokens = Glint.tokenize("a.b");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("correctly orders nested access `a.b.c`", () => {
+            const tokens = Glint.tokenize("a.b.c");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "c", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("correctly orders nested function call `a.b(c)`", () => {
+            const tokens = Glint.tokenize("a.b(c)");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            console.log(output);
+            assertTokensEqualWithArity(output, [
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "c", type: GlintTokenizer.Types.WORD },
+                { value: "@", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("correctly orders nested function call `a.b.c(d)`", () => {
+            const tokens = Glint.tokenize("a.b.c(d)");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            console.log(output);
+            assertTokensEqualWithArity(output, [
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "c", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "d", type: GlintTokenizer.Types.WORD },
+                { value: "@", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
     });
     
     describe("adverbs", () => {
@@ -398,6 +540,20 @@ describe("shunting", () => {
             assertTokensEqualWithArityAndAdverbs(output, [
                 { value: "1993", type: GlintTokenizer.Types.NUMBER },
                 { value: "-", arity: 1, type: GlintTokenizer.Types.OPERATOR, adverbs: [
+                    { value: ".", type: GlintTokenizer.Types.ADVERB },
+                ] },
+            ]);
+        });
+        
+        it("stacks multiple adverbs", () => {
+            const tokens = Glint.tokenize("4 ..% 5");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArityAndAdverbs(output, [
+                { value: "4", type: GlintTokenizer.Types.NUMBER },
+                { value: "5", type: GlintTokenizer.Types.NUMBER },
+                { value: "%", arity: 2, type: GlintTokenizer.Types.OPERATOR, adverbs: [
+                    { value: ".", type: GlintTokenizer.Types.ADVERB },
                     { value: ".", type: GlintTokenizer.Types.ADVERB },
                 ] },
             ]);
