@@ -1,5 +1,14 @@
 @import url('https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Inconsolata:wght@200..900&display=swap');
 
+:root {
+    --body-color: #244;
+    --dark-color: #022;
+    --light-color: #153737;
+    --text-color: #add;
+    --link-base: #58f;
+    --link-hover: #9cf;
+}
+
 textarea, .line {
     font-family: Inconsolata, Consolas, monospace;
 }
@@ -9,7 +18,8 @@ body {
 h1 {
     margin: 5px;
     font-size: 36px;
-    text-align: center;
+    /* text-align: center; */
+    text-align: left;
 }
 h2 {
     margin: 0;
@@ -19,17 +29,31 @@ h1 img {
 }
 body {
     margin: 0;
-    background-color: #244;
-    color: #add;
+    background-color: var(--body-color);
+    color: var(--text-color);
 }
 header {
-    background-color: #022;
+    background-color: var(--dark-color);
     color: #cff;
     padding: 5px 20px;
     position: sticky;
     top: 0;
     z-index: 1000;
-    box-shadow: 0 0 35px #244;
+    box-shadow: 0 0 35px var(--body-color);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+button {
+    color: var(--text-color);
+    background-color: var(--light-color);
+    border: 2px solid;
+    border-radius: 5px;
+    padding: 5px;
+    cursor: pointer;
+}
+button:hover {
+    background-color: var(--body-color);
 }
 article {
     padding: 10px;
@@ -38,11 +62,11 @@ textarea {
     padding: 10px;
     margin: 3px 0;
     box-sizing: border-box;
-    border: 1px solid #ccc;
     border-radius: 5px;
     font-size: 16px;
-    background-color: #153737;
-    color: #add;
+    background-color: var(--light-color);
+    color: var(--text-color);
+    /* border: 1px solid #ccc; */
     border: 2px solid;
     resize: none;
     white-space: pre;
@@ -50,8 +74,8 @@ textarea {
     overflow-x: scroll;
 }
 textarea[readonly] {
-    background-color: #022;
-    border-color: #022;
+    background-color: var(--dark-color);
+    border-color: var(--dark-color);
 }
 .line {
     display: flex;
@@ -67,14 +91,15 @@ textarea[readonly] {
 }
 
 nav {
-    text-align: center;
+    /* text-align: center; */
+    text-align: left;
 }
 
 a, a:visited {
-    color: #58f;
+    color: var(--link-base);
 }
 a:hover {
-    color: #9cf;
+    color: var(--link-hover);
 }
 
 textarea.semistatic {

@@ -80,4 +80,5 @@ window.addEventListener("load", function () {
             }
         });
     }
+    run.addEventListener("click", () => runCode(code.value, input.value));
 });
