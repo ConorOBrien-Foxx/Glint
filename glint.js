@@ -2126,6 +2126,37 @@ GlintInterpreter.STANDARD_LIBRARY.reverse =
         .setName("reverse")
         .setArity(1);
 
+GlintInterpreter.STANDARD_LIBRARY.pad_start =
+    new GlintFunction((str, n, padWith=" ") => {
+        return str.padStart(n, padWith)
+    })
+        .setName("pad_start")
+        .setArity([2, 3]);
+
+GlintInterpreter.STANDARD_LIBRARY.pad_end =
+    new GlintFunction((str, n, padWith=" ") => {
+        return str.padEnd(n, padWith)
+    })
+        .setName("pad_end")
+        .setArity([2, 3]);
+
+GlintInterpreter.STANDARD_LIBRARY.center =
+    new GlintFunction((str, n, padWith=" ") => {
+        if(n <= str.length) {
+            return str;
+        }
+        let deficit = n - str.length;
+        let padAtEnd = Math.ceil(deficit / 2);
+        let padAtStart = deficit - padAtEnd;
+        console.log(padAtEnd, padWith.length);
+        console.log(Math.ceil(padAtEnd / padWith.length));
+        let repeated = padWith.repeat(Math.ceil(padAtEnd / padWith.length));
+        return repeated.slice(0, padAtStart) + str + repeated.slice(0, padAtEnd);
+    })
+        .setName("center")
+        .setArity([2, 3]);
+    
+
 Glint.tokenize = string => {
     let tokenizer = new GlintTokenizer(string);
     return tokenizer.getTokens();
