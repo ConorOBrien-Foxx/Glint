@@ -531,6 +531,33 @@ describe("shunting", () => {
                 { value: "@", arity: 2, type: GlintTokenizer.Types.OPERATOR },
             ]);
         });
+        
+        it("correctly binds unary operations less tightly than dot access", () => {
+            const tokens = Glint.tokenize("-a.b");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            // console.log(output);
+            assertTokensEqualWithArity(output, [
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "-", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        
+        it("correctly binds unary operations less tightly than dot access call", () => {
+            const tokens = Glint.tokenize("-a.b()");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            // console.log(output);
+            assertTokensEqualWithArity(output, [
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "@", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "-", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
     });
     
     describe("adverbs", () => {

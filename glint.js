@@ -2112,6 +2112,20 @@ GlintInterpreter.STANDARD_LIBRARY.each_slice =
         .setName("each_slice")
         .setArity(2);
 
+GlintInterpreter.STANDARD_LIBRARY.to_s =
+    new GlintFunction(thing => {
+        return thing.toString(); // whatever
+    })
+        .setName("to_s")
+        .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.reverse =
+    new GlintFunction(arr => {
+        return [...arr].reverse();
+    })
+        .setName("reverse")
+        .setArity(1);
+
 Glint.tokenize = string => {
     let tokenizer = new GlintTokenizer(string);
     return tokenizer.getTokens();
