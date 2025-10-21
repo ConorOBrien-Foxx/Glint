@@ -398,6 +398,8 @@ class GlintTokenizer {
         return { whole, groups };
     }
     
+    // sentinel used in flushing
+    static PROGRAM_START = Symbol("GlintTokenizer.PROGRAM_START");
     static Types = {
         OPERATOR: Symbol("GlintTokenizer.Types.OPERATOR"),
         ADVERB: Symbol("GlintTokenizer.Types.ADVERB"),
@@ -618,6 +620,10 @@ class GlintShunting {
         this.autoInsertParentheses();
     }
     
+    getDepthSum() {
+        return Object.values(this.depths).reduce((p, c) => p + c, 0);
+    }
+    
     updateDepths(token, check = true) {
         if(token.type === GlintTokenizer.Types.OPEN_BRACE) {
             this.depths.brace++;
@@ -760,7 +766,9 @@ class GlintShunting {
         ) {
             this.outputQueue.push(this.operatorStack.pop());
         }
-        assert(types.length === 0 || this.operatorStack.length > 0,
+        assert(types.length === 0
+            || types.includes(GlintTokenizer.PROGRAM_START)
+            || this.operatorStack.length > 0,
             `Error: Could not find matching flush target ${Glint.display(types)}`
         );
     }
@@ -836,32 +844,51 @@ class GlintShunting {
             // TODO: error if next is not verb
         }
         else if(token.type === GlintTokenizer.Types.LINEBREAK) {
-            Glint.console.log("separator encountered");
-            // TODO: check to see we are only breaking when syntactically valid
-            // TODO: multi-line lambdas
-            this.flushTo();
-            this.nextState({
-                opArity: 1,
-                parenIsFunctionCall: false,
-                lastWasData: false,
-            });
+            if(this.getDepthSum() === 0) {
+                // only break if we're not in the middle of any expression expecting an end
+                Glint.console.log("separator encountered");
+                this.flushTo();
+                this.nextState({
+                    opArity: 1,
+                    parenIsFunctionCall: false,
+                    lastWasData: false,
+                });
+            }
+            else {
+                // we should treat this like a semicolon in this context
+                this.flushTo(
+                    GlintTokenizer.Types.OPEN_PAREN,
+                    GlintTokenizer.Types.OPEN_BRACKET,
+                    GlintTokenizer.Types.OPEN_BRACE,
+                );
+            }
         }
         else if(token.type === GlintTokenizer.Types.SEPARATOR) {
             // separates function arguments
+            // console.log("Sep stack", this.operatorStack);
             this.flushTo(
                 GlintTokenizer.Types.OPEN_PAREN,
                 GlintTokenizer.Types.OPEN_BRACKET,
+                GlintTokenizer.Types.OPEN_BRACE,
+                GlintTokenizer.PROGRAM_START,
                 // TODO: check if brace is needed?
             );
+            // console.log("Sep stack", this.operatorStack);
             
-            assert(this.arityStack.length > 0, "Unexpected separator outside function call");
-            this.arityStack[this.arityStack.length - 1]++;
+            let inLambda = this.operatorStack.at(-1)?.type === GlintTokenizer.Types.OPEN_BRACE;
+            let inFunctionCall = this.arityStack.length > 0;
+            // console.log(inLambda, inFunctionCall);
+            // assert(inLambda || inFunctionCall, "Unexpected separator outside function call/lambda");
             
-            this.nextState({
-                opArity: 1,
-                parenIsFunctionCall: false,
-                lastWasData: false,
-            });
+            if(!inLambda && inFunctionCall) {
+                this.arityStack[this.arityStack.length - 1]++;
+                
+                this.nextState({
+                    opArity: 1,
+                    parenIsFunctionCall: false,
+                    lastWasData: false,
+                });
+            }
         }
         else if(token.type === GlintTokenizer.Types.OPERATOR) {
             acceptsAdverb = true;
@@ -1016,8 +1043,8 @@ class GlintShunting {
             let brace = this.operatorStack.pop();
             let body = this.outputQueue.splice(brace.outputQueueStartIndex);
             let lambda = this.outputQueue.pop();
-            console.log("!! args", lambda.groups);
-            console.log("!! body", body);
+            Glint.console.log("!! args", lambda.groups);
+            Glint.console.log("!! body", body);
             this.outputQueue.push({
                 ...lambda,
                 groups: [ lambda.groups, body ],
@@ -1036,6 +1063,7 @@ class GlintShunting {
         else {
             assert(false, `Unhandled token: ${Glint.display(token)}`);
         }
+        this.updateDepths(token);
         
         if(!skipped) {
             assert(this.lastAdverb === null || acceptsAdverb, `Cannot have adverb before ${token.type.toString()}`);
@@ -1047,8 +1075,11 @@ class GlintShunting {
     assertFullOperands() {
         let mockQueue = [...this.outputQueue];
         
+        Glint.console.log("HELP WHAT:", this.debugOutputQueue(), mockQueue);
         let stackSize = 0;
         mockQueue.forEach(token => {
+            // console.log("token:", token);
+            // console.log("size", stackSize);
             if(typeof token.arity !== "undefined") {
                 // TODO: inspect what arities the operator expects for error reporting, e.g. "expected 1 or 2" for "-"
                 assert(stackSize >= token.arity, `Insufficient operands for operator ${token.value}, expected ${token.arity}, got ${stackSize}`);
@@ -1058,6 +1089,7 @@ class GlintShunting {
             else {
                 stackSize++;
             }
+            // console.log("size after", stackSize);
         });
     }
     
@@ -1308,7 +1340,7 @@ class GlintInterpreter {
             this.assertArity(value, args, 2);
             let [ x, y ] = args;
             if(Glint.isList(x) && Glint.isFunction(y)) {
-                if(y.seed !== GlintFunction.NO_SEED) {
+                if("seed" in y && y.seed !== GlintFunction.NO_SEED) {
                     return x.reduce(async (p, c) => await y.call(this, await p, await c), y.seed);
                 }
                 else {
@@ -1879,7 +1911,7 @@ GlintInterpreter.STANDARD_LIBRARY.eye =
 
 GlintInterpreter.STANDARD_LIBRARY.map =
     new GlintFunction(function (...args) {
-        console.log("!! MAP !!", args);
+        Glint.console.log("!! MAP !!", args);
         if(args.length === 1) {
             let fn = args[0];
             return new GlintFunction(function (arr) {
@@ -1891,11 +1923,23 @@ GlintInterpreter.STANDARD_LIBRARY.map =
         }
         assert(args.length === 2, "Incorrect number of arguments given to map (expected 1 or 2)");
         let [ arr, fn ] = args;
-        console.log("arr:", arr);
+        Glint.console.log("arr:", arr);
         return mapInSeries.call(this, arr, fn);
     })
         .setName("map")
         .setArity([2, 1]);
+
+GlintInterpreter.STANDARD_LIBRARY.zip =
+    new GlintFunction(function (...args) {
+        if(args.length === 0) {
+            return [];
+        }
+        let smallest = Math.min(...args.map(arg => arg.length));
+        let [ head, ...rest ] = args;
+        return head.slice(0, smallest).map((el, idx) => [ el, ...rest.map(list => list[idx]) ]);
+    })
+        .setName("zip")
+        .setArity(Infinity);
 
 GlintInterpreter.STANDARD_LIBRARY.deg =
     new GlintFunction(n => n * Math.PI / 180)
@@ -2009,6 +2053,64 @@ GlintInterpreter.STANDARD_LIBRARY.suffixes =
     new GlintFunction(arr => arr.map((_, i) => arr.slice(i)))
         .setName("prefixes")
         .setArity(1);
+
+GlintInterpreter.STANDARD_LIBRARY.first =
+    new GlintFunction((...args) => {
+        if(args.length === 1) {
+            return args[0].at(0);
+        }
+        else {
+            // TODO: maybe we should allow bigints in these contexts
+            let [ base, n ] = args;
+            return base.slice(0, n);
+        }
+    })
+        .setName("last")
+        .setArity([1, 2]);
+
+GlintInterpreter.STANDARD_LIBRARY.last =
+    new GlintFunction((...args) => {
+        if(args.length === 1) {
+            return args[0].at(-1);
+        }
+        else {
+            // TODO: maybe we should allow bigints in these contexts
+            let [ base, n ] = args;
+            if(n === 0) {
+                return [];
+            }
+            return base.slice(-n);
+        }
+    })
+        .setName("last")
+        .setArity([1, 2]);
+
+GlintInterpreter.STANDARD_LIBRARY.tee =
+    new GlintFunction(function (base, fn) {
+        fn.call(this, base);
+        return base;
+    })
+        .setName("tee")
+        .setArity(2);
+
+GlintInterpreter.STANDARD_LIBRARY.each_cons =
+    new GlintFunction((arr, by) => {
+        assert(by > 0, `Invalid slice size ${by}`);
+        return Glint.range(arr.length - by + 1)
+            .map(idx => arr.slice(idx, idx + by));
+        // arr.slice(by).map((el, idx) => [ arr[idx - 1], ]);
+    })
+        .setName("each_cons")
+        .setArity(2);
+
+GlintInterpreter.STANDARD_LIBRARY.each_slice =
+    new GlintFunction((arr, by) => {
+        assert(by > 0, `Invalid slice size ${by}`);
+        return Glint.range(Math.ceil(arr.length / by))
+            .map(idx => arr.slice(idx * by, (idx + 1) * by));
+    })
+        .setName("each_slice")
+        .setArity(2);
 
 Glint.tokenize = string => {
     let tokenizer = new GlintTokenizer(string);
