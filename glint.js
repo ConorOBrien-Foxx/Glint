@@ -2188,7 +2188,21 @@ GlintInterpreter.STANDARD_LIBRARY.center =
     })
         .setName("center")
         .setArity([2, 3]);
-    
+
+GlintInterpreter.STANDARD_LIBRARY.min =
+    new GlintFunction((...args) => Math.min(...args.flat()))
+        .setName("min")
+        .setArity(Infinity);
+
+GlintInterpreter.STANDARD_LIBRARY.max =
+    new GlintFunction((...args) => Math.max(...args.flat()))
+        .setName("max")
+        .setArity(Infinity);
+
+GlintInterpreter.STANDARD_LIBRARY.flat =
+    new GlintFunction(arr => arr.flat())
+        .setName("flat")
+        .setArity(1);
 
 Glint.tokenize = string => {
     let tokenizer = new GlintTokenizer(string);
