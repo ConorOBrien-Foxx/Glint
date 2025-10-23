@@ -417,11 +417,13 @@ class GlintTokenizer {
         STRING: Symbol("GlintTokenizer.Types.STRING"),
         LAMBDA: Symbol("GlintTokenizer.Types.LAMBDA"),
         LINEBREAK: Symbol("GlintTokenizer.Types.LINEBREAK"),
+        COMMENT: Symbol("GlintTokenizer.Types.COMMENT"),
     };
     // TODO: accept custom operators
     // final operator names have all whitespace removed
     static Regexes = [
         // TODO: better comma-in-number verification (e.g. ,,,3., shouldn't be a valid number)
+        [ /\/\/.*($|\n)/, GlintTokenizer.Types.COMMENT ],
         [ /(_?(?:[\d,]+(?:\.[\d,]+)?|\.[\d,]+))(deg|n|b|big)?/, GlintTokenizer.Types.NUMBER ],
         [ /%\s*of|<=>|\|>|[:<>!]=|[-+\\/%*^=<>!@#|]|:|`\w+`/, GlintTokenizer.Types.OPERATOR ],
         [ /[.&]/, GlintTokenizer.Types.ADVERB ],
@@ -589,8 +591,12 @@ class GlintShunting {
             || token.type === GlintTokenizer.Types.OPEN_BRACE;
     }
     
+    static SKIP_TOKEN_TYPES = [
+        GlintTokenizer.Types.COMMENT,
+        GlintTokenizer.Types.WHITESPACE,
+    ];
     static shouldSkip(token) {
-        return token.type === GlintTokenizer.Types.WHITESPACE;
+        return GlintShunting.SKIP_TOKEN_TYPES.includes(token.type);
     }
     
     constructor(tokens) {
