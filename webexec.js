@@ -81,4 +81,17 @@ window.addEventListener("load", function () {
         });
     }
     run.addEventListener("click", () => runCode(code.value, input.value));
+    const beautifyTokens = tokens =>
+        tokens.map(token => [token.type.toString().padEnd(44), JSON.stringify(token.value)].join(" ")).join("\n");
+    tokenize.addEventListener("click", () => {
+        output.value = "";
+        const tokens = Glint.tokenize(code.value);
+        output.value += beautifyTokens(tokens);
+        fitTextToArea(output);
+        const shunter = new GlintShunting(tokens);
+        const result = shunter.shuntingYard();
+        console.log(result);
+        output.value += `\n----\nOperator stack | ${shunter.debugOperatorStack()}\n  Output queue | ${shunter.debugOutputQueue()}\n----\n${beautifyTokens(result)}`;
+        fitTextToArea(output);
+    });
 });

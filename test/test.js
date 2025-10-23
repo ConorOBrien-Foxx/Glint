@@ -734,6 +734,51 @@ describe("shunting", () => {
                 { value: "4", type: GlintTokenizer.Types.NUMBER },
             ]);
         });
+        it("can evaluate chained expressions", () => {
+            const tokens = Glint.tokenize("a.b().c()");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                // idk what this should even be, actually. maybe there should be a "canary" preventing stack stuff from reaching further down than it should
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "@", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "c", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "@", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        it("can evaluate chained expressions separated by newlines", () => {
+            const tokens = Glint.tokenize("a\n.b()\n.c()");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                // idk what this should even be, actually. maybe there should be a "canary" preventing stack stuff from reaching further down than it should
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "@", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "c", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "@", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
+        it("can evaluate chained expressions separated by newlines and spaces", () => {
+            const tokens = Glint.tokenize("a\n     .b()\n\t.c()");
+            shunter = new GlintShunting(tokens);
+            const output = shunter.shuntingYard();
+            assertTokensEqualWithArity(output, [
+                // idk what this should even be, actually. maybe there should be a "canary" preventing stack stuff from reaching further down than it should
+                { value: "a", type: GlintTokenizer.Types.WORD },
+                { value: "b", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "@", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+                { value: "c", type: GlintTokenizer.Types.WORD },
+                { value: ".", arity: 2, type: GlintTokenizer.Types.OPERATOR },
+                { value: "@", arity: 1, type: GlintTokenizer.Types.OPERATOR },
+            ]);
+        });
     });
 });
 

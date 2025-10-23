@@ -595,6 +595,7 @@ class GlintShunting {
     
     constructor(tokens) {
         this.tokens = tokens;
+        this.tokenQueue = [];
         this.outputQueue = [];
         this.operatorStack = [];
         // for keep track of which prefix adverbs are being used
@@ -793,7 +794,22 @@ class GlintShunting {
         this.nextParenIsFunctionCall = parenIsFunctionCall;
     }
     
-    parseToken(token) {
+    peekSignificantToken(error = true) {
+        assert(!error || this.tokenQueue?.length, "Attempting to peek token from empty tokenQueue");
+        let idx = 0;
+        while(this.shouldSkip(this.tokenQueue[idx])) {
+            idx++;
+            if(idx >= this.tokenQueue.length) {
+                assert(!error, "Attempting to peek token after EOF");
+                break;
+            }
+        }
+        return this.tokenQueue[idx];
+    }
+    
+    parseToken() {
+        assert(this.tokenQueue?.length, "Attempting to parse token on empty tokenQueue");
+        let token = this.tokenQueue.shift();
         assert(token, `Cannot call parseToken with non-truthy token '${token}'`);
         assert(token.type, `Token must have associated type; got '${token.type?.toString()}' of ${JSON.stringify(token)}`);
         
@@ -821,7 +837,8 @@ class GlintShunting {
                 let dotToken = this.adverbStack.pop();
                 dotToken.type = GlintTokenizer.Types.OPERATOR;
                 Glint.console.log("DOT TOKEN:", dotToken);
-                this.parseToken(dotToken);
+                this.tokenQueue.unshift(dotToken);
+                this.parseToken();
             }
             this.assertNoAdverbs();
             this.outputQueue.push(token);
@@ -844,7 +861,12 @@ class GlintShunting {
             // TODO: error if next is not verb
         }
         else if(token.type === GlintTokenizer.Types.LINEBREAK) {
-            if(this.getDepthSum() === 0) {
+            let nextToken = this.peekSignificantToken(false);
+            if(nextToken && nextToken.value === ".") {
+                // let the rest of the expression parse
+                skipped = true;
+            }
+            else if(this.getDepthSum() === 0) {
                 // only break if we're not in the middle of any expression expecting an end
                 Glint.console.log("separator encountered");
                 this.flushTo();
@@ -1094,9 +1116,15 @@ class GlintShunting {
     }
     
     shuntingYard() {
+        this.tokenQueue = [...this.tokens];
+        while(this.tokenQueue.length) {
+            this.parseToken();
+        }
+        /*
         for(let token of this.tokens) {
             this.parseToken(token);
         }
+        */
         
         // flush
         while(this.operatorStack.length > 0) {
@@ -1507,19 +1535,19 @@ class GlintInterpreter {
             }
             else {
                 // designed to facilitate common patterns of objects
-                if(base.has) {
+                if(base?.has) {
                     // has-get-at-subscript pattern (Set)
                     if(base.has(prop)) {
                         return base.get ? base.get(prop) : base.at ? base.at(prop) : base[prop];
                     }
                 }
-                else if(base.includes) {
+                else if(base?.includes) {
                     // includes-at-subscript pattern (Array, String)
                     if(base.includes(prop)) {
                         return base.at ? base.at(prop) : base[prop];
                     }
                 }
-                else {
+                else if(base !== null) {
                     // hasOwn-subscript syntax (Object)
                     if(Object.hasOwn(base, prop)) {
                         return base[prop];
@@ -1986,7 +2014,6 @@ GlintInterpreter.STANDARD_LIBRARY.eval =
         .setName("eval")
         .setArity(1);
 
-// TODO: overload for arrays
 const split = (s, by) => {
     // TODO: generalize for sequences
     if(Array.isArray(s)) {
